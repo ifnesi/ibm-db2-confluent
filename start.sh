@@ -69,7 +69,7 @@ wait_for_cmd() {
 }
 
 echo ""
-echo "Waiting for core services (Db2 can take up to 5 minutes)..."
+echo "Waiting for core services (allow 5~10 minutes due to DB2 initialisation)..."
 
 wait_for "pgAdmin"           "http://localhost:5050/login"   30
 wait_for "Schema Registry"   "http://localhost:8081/"        60

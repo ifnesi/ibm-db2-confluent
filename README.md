@@ -41,7 +41,7 @@ A **data generator** container continuously inserts and updates up to 10 rows in
 ./start.sh
 ```
 
-The first run pulls all images and builds the custom containers - allow **5–10 minutes**. Subsequent restarts are fast (~30 s) because data volumes are preserved.
+The first run pulls all images and builds the custom containers - allow **5~10 minutes**. Subsequent restarts are fast (~30 s) because data volumes are preserved.
 
 `start.sh` waits for Schema Registry, Kafka Connect, Control Center, and pgAdmin to be healthy, then prints the service URLs.
 
