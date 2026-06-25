@@ -9,9 +9,11 @@ IBM Db2/LUW  (data generator: 10 rows, 1 op/sec)
     │
     │  JDBC Source Connector (poll every 1s)
     ▼
-Confluent Platform
-  Kafka topic: db2-EMPLOYEES
-  Schema Registry (Avro)
+┌───────────────────────────────────────┐
+│ Confluent Platform                    │
+│   Kafka topic: db2-EMPLOYEES          │
+│   Schema Registry (Avro)              │
+└───────────────────────────────────────┘
     │               │               │
     ▼               ▼               ▼
 PostgreSQL       Redis           Python Frontend
