@@ -1,4 +1,4 @@
-# IBM Db2 → Confluent Platform — Live Pipeline Demo
+# IBM Db2 → Confluent Platform - Live Pipeline Demo
 
 This demo shows how to build a **live data pipeline** from IBM Db2 to Confluent Platform, with a **1:3 fanout** to three different sinks: PostgreSQL, Redis, and a Python frontend. The pipeline is fully containerized and runs locally using Docker Compose.
 
@@ -27,11 +27,11 @@ A **data generator** container continuously inserts and updates up to 10 rows in
 
 ## Prerequisites
 
-- **Docker Desktop ≥ 4.x** — at least **8 GB RAM** allocated, **15 GB** free disk space
+- **Docker Desktop ≥ 4.x** - at least **8 GB RAM** allocated, **15 GB** free disk space
   ```bash
   brew install --cask docker
   ```
-- **Apple Silicon (M1/M2/M3):** Rosetta 2 handles the `linux/amd64` Db2 image automatically — no extra configuration needed
+- **Apple Silicon (M1/M2/M3):** Rosetta 2 handles the `linux/amd64` Db2 image automatically - no extra configuration needed
 
 ## Quick Start
 
@@ -41,7 +41,7 @@ A **data generator** container continuously inserts and updates up to 10 rows in
 ./start.sh
 ```
 
-The first run pulls all images and builds the custom containers — allow **5–10 minutes**. Subsequent restarts are fast (~30 s) because data volumes are preserved.
+The first run pulls all images and builds the custom containers - allow **5–10 minutes**. Subsequent restarts are fast (~30 s) because data volumes are preserved.
 
 `start.sh` waits for Schema Registry, Kafka Connect, Control Center, and pgAdmin to be healthy, then prints the service URLs.
 
@@ -59,22 +59,22 @@ This waits for DB2 to accept JDBC connections, then deploys all three connectors
 
 | Interface | URL | Credentials |
 |---|---|---|
-| **Live Dashboard** | http://localhost:5001 | — |
-| **Control Center** | http://localhost:9021 | — |
+| **Live Dashboard** | http://localhost:5001 | - |
+| **Control Center** | http://localhost:9021 | - |
 | **pgAdmin** | http://localhost:5050 | admin@admin.org / admin |
-| **Redis Commander** | http://localhost:8087 | — |
-| **Kafka Connect API** | http://localhost:8083 | — |
-| **Schema Registry** | http://localhost:8081 | — |
-| **Prometheus** | http://localhost:9090 | — |
-| **Flink UI** | http://localhost:9081 | — |
+| **Redis Commander** | http://localhost:8087 | - |
+| **Kafka Connect API** | http://localhost:8083 | - |
+| **Schema Registry** | http://localhost:8081 | - |
+| **Prometheus** | http://localhost:9090 | - |
+| **Flink UI** | http://localhost:9081 | - |
 
 ## Stopping and Starting
 
 ```bash
-# Stop — preserves nothing (clean slate on next start)
+# Stop - preserves nothing (clean slate on next start)
 ./stop.sh
 
-# Start — always does a full reset, DB2 re-initialises from scratch (3-5 min)
+# Start - always does a full reset, DB2 re-initialises from scratch (3-5 min)
 ./start.sh
 ```
 
@@ -117,7 +117,7 @@ Password: postgres
 docker exec -it postgres psql -U postgres -d postgres -c "SELECT * FROM employees;"
 ```
 
-pgAdmin is pre-configured with a **Demo — PostgreSQL** server. Open http://localhost:5050 and expand the server tree — no manual setup required.
+pgAdmin is pre-configured with a **Demo - PostgreSQL** server. Open http://localhost:5050 and expand the server tree - no manual setup required.
 
 ### Redis (`localhost:6379`)
 
@@ -173,16 +173,16 @@ docker exec broker kafka-consumer-groups \
 
 ## Troubleshooting
 
-**DB2 data generator shows "not ready yet" on startup** — normal. DB2 takes 15–30 s to resume from a preserved volume, and 3–5 min on a full reset. The generator loops patiently until the JDBC port is open.
+**DB2 data generator shows "not ready yet" on startup** - normal. DB2 takes 15–30 s to resume from a preserved volume, and 3–5 min on a full reset. The generator loops patiently until the JDBC port is open.
 
-**Source connector in FAILED state** — run `./deploy-connectors.sh` again; the script automatically waits for DB2 and retries failed connectors.
+**Source connector in FAILED state** - run `./deploy-connectors.sh` again; the script automatically waits for DB2 and retries failed connectors.
 
-**pgAdmin "no password supplied" error** — `start.sh` seeds the password automatically. If you skip `start.sh` and start containers manually, run:
+**pgAdmin "no password supplied" error** - `start.sh` seeds the password automatically. If you skip `start.sh` and start containers manually, run:
 ```bash
 ./start.sh   # re-seeds the pgAdmin password as part of startup
 ```
 
-**Port conflict** — check which process owns the port:
+**Port conflict** - check which process owns the port:
 ```bash
 lsof -i :50000   # DB2
 lsof -i :9021    # Control Center
