@@ -63,7 +63,7 @@ This waits for DB2 to accept JDBC connections, then deploys all three connectors
 |---|---|---|
 | **Live Dashboard** | http://localhost:5001 | — |
 | **Control Center** | http://localhost:9021 | — |
-| **pgAdmin** | http://localhost:5050 | admin@demo.com / admin |
+| **pgAdmin** | http://localhost:5050 | admin@admin.org / admin |
 | **Redis Commander** | http://localhost:8087 | — |
 | **Kafka Connect API** | http://localhost:8083 | — |
 | **Schema Registry** | http://localhost:8081 | — |
@@ -85,10 +85,10 @@ This waits for DB2 to accept JDBC connections, then deploys all three connectors
 ### IBM Db2 (`localhost:50000`)
 
 ```
-Database : testdb
-User     : db2inst1
-Password : db2inst1-pwd
-JDBC URL : jdbc:db2://localhost:50000/testdb
+Database: testdb
+User    : db2inst1
+Password: db2inst1-pwd
+JDBC URL: jdbc:db2://localhost:50000/testdb
 ```
 
 Open a Db2 CLI session:
@@ -110,9 +110,9 @@ Watch rows being updated live (refreshes every second):
 ### PostgreSQL (`localhost:5432`)
 
 ```
-Database : postgres
-User     : postgres
-Password : postgres
+Database: postgres
+User    : postgres
+Password: postgres
 ```
 
 ```bash
