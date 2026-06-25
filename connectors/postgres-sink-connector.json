@@ -1,9 +1,9 @@
 {
-  "name": "postgres-sink-connector",
+  "name": "postgres-sink",
   "config": {
     "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
     "tasks.max": "1",
-    "topics": "db2-EMPLOYEES",
+    "topics": "DB2INST1.IOT_DEVICES,IOT_DEVICES_AVG",
     "connection.url": "jdbc:postgresql://postgres:5432/postgres",
     "connection.user": "postgres",
     "connection.password": "postgres",
@@ -11,13 +11,19 @@
     "auto.evolve": "true",
     "insert.mode": "upsert",
     "pk.mode": "record_value",
-    "pk.fields": "id",
-    "table.name.format": "employees",
+    "pk.fields": "device_id",
+    "table.name.format": "${topic}",
     "key.converter": "org.apache.kafka.connect.storage.StringConverter",
     "value.converter": "io.confluent.connect.avro.AvroConverter",
     "value.converter.schema.registry.url": "http://schema-registry:8081",
-    "transforms": "renameFields",
+    "transforms": "routeDevices,routeAvg,renameFields",
+    "transforms.routeDevices.type": "org.apache.kafka.connect.transforms.RegexRouter",
+    "transforms.routeDevices.regex": "DB2INST1\\.IOT_DEVICES",
+    "transforms.routeDevices.replacement": "iot_devices",
+    "transforms.routeAvg.type": "org.apache.kafka.connect.transforms.RegexRouter",
+    "transforms.routeAvg.regex": "IOT_DEVICES_AVG",
+    "transforms.routeAvg.replacement": "iot_devices_avg",
     "transforms.renameFields.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
-    "transforms.renameFields.renames": "ID:id,NAME:name,DEPARTMENT:department,SALARY:salary,HIRE_DATE:hire_date,UPDATED_AT:updated_at"
+    "transforms.renameFields.renames": "DEVICEID:device_id,VENDOR:vendor,SERIALNUMBER:serial_number,TEMPERATURE:temperature,HUMIDITY:humidity,PRESSURE:pressure,CREATEDAT:created_at,UPDATEDAT:updated_at"
   }
 }

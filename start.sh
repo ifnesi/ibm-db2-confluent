@@ -17,6 +17,9 @@ echo "Stopping any previous stack and removing volumes..."
 docker compose down -v --remove-orphans 2>/dev/null || true
 echo ""
 
+echo "Building custom images (no cache to ensure latest code is used)..."
+docker compose build --no-cache db2-data-generator frontend
+
 echo "Starting all services..."
 docker compose up -d
 
@@ -71,10 +74,11 @@ wait_for_cmd() {
 echo ""
 echo "Waiting for core services (allow 5~10 minutes due to DB2 initialisation)..."
 
-wait_for "pgAdmin"           "http://localhost:5050/login"   30
 wait_for "Schema Registry"   "http://localhost:8081/"        60
 wait_for "Kafka Connect"     "http://localhost:8083/"        60
 wait_for "Control Center"    "http://localhost:9021/login"   90
+wait_for "pgAdmin"           "http://localhost:5050/login"   30
+wait_for "Flink"             "http://localhost:9081/"        30
 wait_for "Flask Frontend"    "http://localhost:5001/"        30
 wait_for_cmd "Redis"         "docker exec redis redis-cli ping"                               30
 wait_for "Redis Commander"   "http://localhost:8087/"                                         30
@@ -102,14 +106,19 @@ fi
 
 echo ""
 echo "Services:"
-echo "  Control Center   http://localhost:9021"
-echo "  Live Dashboard   http://localhost:5001"
-echo "  pgAdmin          http://localhost:5050   (${_pgadmin_email} / ${_pgadmin_pass})"
-echo "  Redis Commander  http://localhost:8087"
-echo "  Kafka Connect    http://localhost:8083"
-echo "  Schema Registry  http://localhost:8081"
+echo "  Control Center     http://localhost:9021"
+echo "  Flink Job Manager  http://localhost:9081"
+echo "  Live Dashboard     http://localhost:5001"
+echo "  pgAdmin            http://localhost:5050   (${_pgadmin_email} / ${_pgadmin_pass})"
+echo "  Redis Commander    http://localhost:8087"
+echo "  Kafka Connect      http://localhost:8083"
+echo "  Schema Registry    http://localhost:8081"
 echo ""
-echo "Deploy connectors (waits for DB2 automatically):"
-echo "  ./deploy-connectors.sh"
+echo "Next steps:"
+echo "  1. Deploy connectors (waits for DB2 automatically):"
+echo "     ./deploy-connectors.sh"
+echo ""
+echo "  2. Deploy Flink averaging job:"
+echo "     ./deploy-flink-job.sh"
 echo ""
 echo "Monitor: docker compose logs -f"

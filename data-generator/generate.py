@@ -1,28 +1,27 @@
 """
-Continuously inserts and updates rows in DB2INST1.EMPLOYEES.
-Keeps the table at most MAX_RECORDS rows; once full it only updates.
+IoT device data generator — creates 10 devices at startup,
+then makes small incremental changes to sensor values every second.
 """
-import jaydebeapi
+import os
 import time
 import random
-import os
+import jaydebeapi
+
 
 DB2_URL = os.environ.get("DB2_URL", "jdbc:db2://db2-luw:50000/testdb")
 DB2_USER = os.environ.get("DB2_USER", "db2inst1")
 DB2_PASSWORD = os.environ.get("DB2_PASSWORD", "db2inst1-pwd")
 JDBC_DRIVER = "com.ibm.db2.jcc.DB2Driver"
 JDBC_JAR = "/app/db2jcc4.jar"
-MAX_RECORDS = 10
+NUM_DEVICES = 10
 
-NAMES = [
-    "Alice Johnson", "Bob Smith", "Carol White", "David Brown",
-    "Eve Davis", "Frank Wilson", "Grace Lee", "Henry Martinez",
-    "Iris Thompson", "Jack Garcia", "Kim Chen", "Liam Roberts",
-    "Mia Williams", "Noah Taylor", "Olivia Moore", "Paul Harris",
-    "Quinn Adams", "Rachel Green", "Sam Turner", "Tina Foster",
+VENDORS = [
+    "SensorCorp", "IoTWorks", "DataFlow", "SmartTech", "DeviceNet",
+    "CloudSense", "TelemetryPro", "MeterMax", "GaugeHub", "StreamData"
 ]
-DEPTS = ["Engineering", "Marketing", "Sales", "HR", "Finance",
-         "Operations", "Legal", "Product", "Security", "Data"]
+
+# Device state: device_id -> {temperature, humidity, pressure}
+device_state = {}
 
 
 def try_connect():
@@ -56,39 +55,86 @@ def run():
     conn = wait_and_connect()
     curs = conn.cursor()
 
-    print("Data generation started (1 operation/second, max 10 rows).", flush=True)
+    print("Data generation started (1 operation/second, 10 IoT devices).", flush=True)
 
+    # Wait for IOT_DEVICES table to exist (init-db.sh runs after DB2 accepts connections)
+    # then insert 10 devices. Retry indefinitely until both table exists and inserts succeed.
     while True:
         try:
-            curs.execute("SELECT COUNT(*) FROM DB2INST1.EMPLOYEES")
-            count = int(curs.fetchone()[0])
+            print("Waiting for IOT_DEVICES table and inserting 10 devices...", flush=True)
+            device_state.clear()
+            for i in range(1, NUM_DEVICES + 1):
+                device_id = f"device-{i:02d}"
+                vendor = random.choice(VENDORS)
+                serial = f"SN{random.randint(100000, 999999)}"
+                temperature = round(random.uniform(15, 25), 2)
+                humidity = round(random.uniform(40, 60), 2)
+                pressure = round(random.uniform(1000, 1020), 2)
 
-            if count < MAX_RECORDS:
-                curs.execute("SELECT COALESCE(MAX(ID), 0) FROM DB2INST1.EMPLOYEES")
-                max_id = int(curs.fetchone()[0])
-                new_id = max_id + 1
-                name = random.choice(NAMES)
-                dept = random.choice(DEPTS)
-                salary = round(random.uniform(50000, 120000), 2)
+                device_state[device_id] = {
+                    "temperature": temperature,
+                    "humidity": humidity,
+                    "pressure": pressure,
+                }
+
                 curs.execute(
-                    "INSERT INTO DB2INST1.EMPLOYEES "
-                    "(ID, NAME, DEPARTMENT, SALARY, HIRE_DATE, UPDATED_AT) "
-                    "VALUES (?, ?, ?, ?, CURRENT DATE, CURRENT TIMESTAMP)",
-                    [new_id, name, dept, salary],
+                    "INSERT INTO DB2INST1.IOT_DEVICES "
+                    "(deviceID, vendor, serialNumber, temperature, humidity, pressure, createdAt, updatedAt) "
+                    "VALUES (?, ?, ?, ?, ?, ?, CURRENT TIMESTAMP, CURRENT TIMESTAMP)",
+                    [device_id, vendor, serial, temperature, humidity, pressure],
                 )
-                conn.commit()
-                print(f"[INSERT] id={new_id} {name} / {dept} / ${salary:,.2f}", flush=True)
+            conn.commit()
+            print(f"[INIT] Created {NUM_DEVICES} devices", flush=True)
+            break
+        except Exception as exc:
+            print(f"  table not ready yet ({exc}) — retrying in 5s...", flush=True)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            time.sleep(5)
+            # Reconnect if the connection broke
+            try:
+                curs.execute("VALUES 1")
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = wait_and_connect()
+                curs = conn.cursor()
+
+    # Update loop: every second, update one random field of one random device
+    while True:
+        try:
+            device_id = random.choice(list(device_state.keys()))
+            field = random.choice(["temperature", "humidity", "pressure"])
+
+            # Apply small incremental change
+            current = device_state[device_id][field]
+            if field == "temperature":
+                change = round(random.uniform(-0.5, 0.5), 2)
+                new_val = max(10, min(30, current + change))
+            elif field == "humidity":
+                change = round(random.uniform(-1, 1), 2)
+                new_val = max(20, min(80, current + change))
+            else:  # pressure
+                change = round(random.uniform(-0.5, 0.5), 2)
+                new_val = max(990, min(1030, current + change))
+
+            device_state[device_id][field] = new_val
+
+            # Update database
+            if field == "temperature":
+                sql = "UPDATE DB2INST1.IOT_DEVICES SET temperature=?, updatedAt=CURRENT TIMESTAMP WHERE deviceID=?"
+            elif field == "humidity":
+                sql = "UPDATE DB2INST1.IOT_DEVICES SET humidity=?, updatedAt=CURRENT TIMESTAMP WHERE deviceID=?"
             else:
-                emp_id = random.randint(1, MAX_RECORDS)
-                salary = round(random.uniform(50000, 120000), 2)
-                curs.execute(
-                    "UPDATE DB2INST1.EMPLOYEES "
-                    "SET SALARY=?, UPDATED_AT=CURRENT TIMESTAMP "
-                    "WHERE ID=?",
-                    [salary, emp_id],
-                )
-                conn.commit()
-                print(f"[UPDATE] id={emp_id} salary=${salary:,.2f}", flush=True)
+                sql = "UPDATE DB2INST1.IOT_DEVICES SET pressure=?, updatedAt=CURRENT TIMESTAMP WHERE deviceID=?"
+
+            curs.execute(sql, [new_val, device_id])
+            conn.commit()
+            print(f"[UPDATE] {device_id} {field}={new_val}", flush=True)
 
         except Exception as exc:
             print(f"Error: {exc} — reconnecting...", flush=True)
@@ -96,7 +142,6 @@ def run():
                 conn.close()
             except Exception:
                 pass
-            # wait_and_connect() loops until DB2 is back — never throws
             conn = wait_and_connect()
             curs = conn.cursor()
 

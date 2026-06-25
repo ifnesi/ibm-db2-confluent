@@ -1,5 +1,5 @@
 #!/bin/bash
-# Deploy all Kafka Connect connectors (source + 2 sinks)
+# Deploy all Kafka Connect connectors (source + sinks)
 
 set -e
 
@@ -20,13 +20,31 @@ wait_for_connect() {
     exit 1
 }
 
-# Wait until DB2's TCPIP listener is fully accepting JDBC connections.
+SCHEMA_REGISTRY_HOST="${SCHEMA_REGISTRY_HOST:-localhost:8081}"
+
+wait_for_schema_registry() {
+    echo "Waiting for Schema Registry at http://$SCHEMA_REGISTRY_HOST ..."
+    for i in $(seq 1 30); do
+        if curl -sf "http://$SCHEMA_REGISTRY_HOST/subjects" -o /dev/null; then
+            echo "Schema Registry is ready."
+            return 0
+        fi
+        echo "  attempt $i/30 ..."
+        sleep 5
+    done
+    echo "ERROR: Schema Registry did not become ready in time." >&2
+    exit 1
+}
+
+# Wait until DB2 accepts JDBC connections AND the IOT_DEVICES table exists.
+# DB2 accepts connections before init-db.sh finishes creating the table,
+# so we must check the table explicitly or the source connector gets SQLCODE=-204.
 wait_for_db2() {
-    echo "Waiting for DB2 to accept connections (can take 3-5 min on first boot)..."
+    echo "Waiting for DB2 + IOT_DEVICES table (can take 3-5 min on first boot)..."
     local start
     start=$(date +%s)
     local attempt=0
-    local max=60   # 60 x 10s = 10 minutes max
+    local max=72   # 72 x 10s = 12 minutes max
 
     while [ $attempt -lt $max ]; do
         attempt=$((attempt + 1))
@@ -41,19 +59,21 @@ wait_for_db2() {
             exit 1
         fi
 
-        # Try a JDBC-level connect
+        # Check both: DB2 accepts connections AND the table exists
         if docker exec db2-luw su - db2inst1 \
-               -c 'db2 connect to testdb > /dev/null 2>&1 && db2 connect reset > /dev/null 2>&1' \
+               -c 'db2 connect to testdb > /dev/null 2>&1 &&
+                   db2 "SELECT COUNT(*) FROM DB2INST1.IOT_DEVICES" > /dev/null 2>&1 &&
+                   db2 connect reset > /dev/null 2>&1' \
                2>/dev/null; then
-            echo "DB2 is ready (${elapsed}s)."
+            echo "DB2 ready and IOT_DEVICES table exists (${elapsed}s)."
             return 0
         fi
 
-        printf "  [%3ds] attempt %d/%d — db2inst1 not yet accepting connections...\n" \
+        printf "  [%3ds] attempt %d/%d — waiting for DB2 and IOT_DEVICES table...\n" \
                "$elapsed" "$attempt" "$max"
         sleep 10
     done
-    echo "ERROR: DB2 did not become ready within $(( max * 10 ))s." >&2
+    echo "ERROR: DB2/IOT_DEVICES did not become ready within $(( max * 10 ))s." >&2
     exit 1
 }
 
@@ -102,11 +122,12 @@ restart_if_failed() {
 
 # ---------------------------------------------------------------------------
 wait_for_connect
+wait_for_schema_registry
 wait_for_db2
 
-deploy "db2-source-connector"    "connectors/db2-source-connector.json"
-deploy "postgres-sink-connector" "connectors/postgres-sink-connector.json"
-deploy "redis-sink-connector"    "connectors/redis-sink-connector.json"
+deploy "db2-source-connector" "connectors/db2-source-connector.json"
+deploy "postgres-sink"        "connectors/postgres-sink-connector.json"
+deploy "redis-sink"           "connectors/redis-sink-connector.json"
 
 echo ""
 echo "Waiting for connectors to start..."
@@ -115,8 +136,8 @@ sleep 8
 echo ""
 echo "Checking and recovering any FAILED connectors..."
 restart_if_failed "db2-source-connector"
-restart_if_failed "postgres-sink-connector"
-restart_if_failed "redis-sink-connector"
+restart_if_failed "postgres-sink"
+restart_if_failed "redis-sink"
 
 echo ""
 echo "=== Final status ==="

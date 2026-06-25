@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>IBM Db2 → Confluent → Live Dashboard</title>
+  <title>IoT Devices → Confluent → Live Dashboard</title>
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -38,6 +39,42 @@
 
     .pipeline span {
       color: #94a3b8;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid #334155;
+      background: #1e293b;
+    }
+
+    .tab-button {
+      padding: 0.75rem 1.5rem;
+      background: transparent;
+      border: none;
+      color: #64748b;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.9rem;
+      border-bottom: 3px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .tab-button:hover {
+      color: #e2e8f0;
+    }
+
+    .tab-button.active {
+      color: #38bdf8;
+      border-bottom-color: #38bdf8;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
     }
 
     .status-bar {
@@ -161,14 +198,45 @@
       color: #475569;
       font-size: 0.9rem;
     }
+
+    .charts-scroll {
+      overflow-y: auto;
+      max-height: calc(100vh - 260px);
+    }
+
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+      padding: 1.5rem 2rem;
+    }
+
+    .chart-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 0.5rem;
+      padding: 1rem;
+    }
+
+    .chart-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #e2e8f0;
+      margin-bottom: 1rem;
+    }
+
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
   </style>
 </head>
 <body>
 
 <header>
-  <div class="logo">&#9889; Live Pipeline Demo</div>
+  <div class="logo">&#9889; IoT Devices Dashboard</div>
   <div class="pipeline">
-    <span>IBM Db2</span> → <span>Confluent Platform</span> → PostgreSQL / Redis / <span style="color:#38bdf8">WebSocket</span>
+    <span>IBM Db2</span> → <span>Confluent Platform</span> → <span>Flink</span> → PostgreSQL / Redis / <span style="color:#38bdf8">WebSocket</span>
   </div>
 </header>
 
@@ -195,52 +263,93 @@
   <div class="fanout-badges">
     <span class="badge badge-source">Source: IBM Db2/LUW</span>
     <span class="badge badge-kafka">Confluent Platform (Kafka + SR)</span>
+    <span class="badge badge-kafka">Flink (1-min averages)</span>
     <span class="badge badge-pg">Sink 1: PostgreSQL</span>
     <span class="badge badge-redis">Sink 2: Redis</span>
     <span class="badge badge-live">Sink 3: Live Dashboard ←</span>
   </div>
 
-  <div class="table-wrapper">
-    <table id="emp-table">
-      <thead>
-        <tr>
-          <th style="width:6%">ID</th>
-          <th style="width:22%">Name</th>
-          <th style="width:20%">Department</th>
-          <th style="width:14%">Salary</th>
-          <th style="width:16%">Hire Date</th>
-          <th style="width:22%">Updated At</th>
-        </tr>
-      </thead>
-      <tbody id="emp-body">
-        {% if employees %}
-          {% for emp in employees %}
-          <tr id="row-{{ emp.ID }}">
-            <td class="id-col">{{ emp.ID }}</td>
-            <td class="name-col">{{ emp.NAME }}</td>
-            <td class="dept-col">{{ emp.DEPARTMENT }}</td>
-            <td class="salary-col">${{ "%.2f"|format(emp.SALARY|float) }}</td>
-            <td class="ts-col">{{ emp.HIRE_DATE }}</td>
-            <td class="ts-col">{{ emp.UPDATED_AT }}</td>
+  <div class="tabs">
+    <button class="tab-button active" onclick="switchTab('devices')">Devices Table</button>
+    <button class="tab-button" onclick="switchTab('averages')">Average Charts (15 min)</button>
+  </div>
+
+  <!-- Tab 1: Devices Table -->
+  <div id="devices" class="tab-content active">
+    <div class="table-wrapper">
+      <table id="devices-table">
+        <thead>
+          <tr>
+            <th style="width:12%">Device ID</th>
+            <th style="width:15%">Vendor</th>
+            <th style="width:15%">Serial Number</th>
+            <th style="width:12%">Temperature</th>
+            <th style="width:12%">Humidity</th>
+            <th style="width:12%">Pressure</th>
+            <th style="width:22%">Updated At</th>
           </tr>
-          {% endfor %}
-        {% else %}
-          <tr id="empty-row"><td colspan="6" class="empty-msg">Waiting for data from Kafka…</td></tr>
-        {% endif %}
-      </tbody>
-    </table>
+        </thead>
+        <tbody id="devices-body">
+          {% if devices %}
+            {% for dev in devices %}
+            <tr id="row-{{ dev.DEVICEID }}">
+              <td class="id-col">{{ dev.DEVICEID }}</td>
+              <td class="name-col">{{ dev.VENDOR }}</td>
+              <td class="dept-col">{{ dev.SERIALNUMBER }}</td>
+              <td class="salary-col">{{ "%.2f"|format(dev.TEMPERATURE|float) }}°C</td>
+              <td class="salary-col">{{ "%.2f"|format(dev.HUMIDITY|float) }}%</td>
+              <td class="salary-col">{{ "%.2f"|format(dev.PRESSURE|float) }} hPa</td>
+              <td class="ts-col">{{ dev.UPDATEDAT }}</td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr id="empty-row"><td colspan="7" class="empty-msg">Waiting for data from Kafka…</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Tab 2: Average Charts -->
+  <div id="averages" class="tab-content">
+    <div class="charts-scroll">
+    <div class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-title">Temperature (°C)</div>
+        <div class="chart-container"><canvas id="canvas-temperature"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Humidity (%)</div>
+        <div class="chart-container"><canvas id="canvas-humidity"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Pressure (hPa)</div>
+        <div class="chart-container"><canvas id="canvas-pressure"></canvas></div>
+      </div>
+    </div>
+    </div>
   </div>
 </div>
 
 <script>
   const socket = io();
-  const tbody = document.getElementById('emp-body');
   let eventCount = 0;
-  const rows = {};  // id -> tr element
+  const deviceRows = {};
 
-  {% if employees %}
-  {% for emp in employees %}
-  rows['{{ emp.ID }}'] = document.getElementById('row-{{ emp.ID }}');
+  // Chart state
+  const DEVICE_COLORS = [
+    '#f87171','#fb923c','#fbbf24','#a3e635','#34d399',
+    '#22d3ee','#60a5fa','#a78bfa','#f472b6','#94a3b8'
+  ];
+  const METRICS = ['temperature', 'humidity', 'pressure'];
+  const metricCharts = {};        // metric -> Chart instance
+  const deviceOrder = [];         // insertion-ordered device IDs
+  const sharedLabels = [];        // shared x-axis timestamps (window_end)
+  const deviceData = {};          // deviceId -> { temperature:[], humidity:[], pressure:[] }
+
+  {% if devices %}
+  {% for dev in devices %}
+  deviceRows['{{ dev.DEVICEID }}'] = document.getElementById('row-{{ dev.DEVICEID }}');
   {% endfor %}
   {% endif %}
 
@@ -248,48 +357,123 @@
     return val !== null && val !== undefined ? String(val) : '—';
   }
 
-  function fmtSalary(val) {
-    const n = parseFloat(val);
-    return isNaN(n) ? '—' : '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  }
-
   function fmtTs(val) {
     if (!val) return '—';
-    // ISO string from Python datetime.isoformat()
     return String(val).replace('T', ' ').substring(0, 19);
   }
 
-  function upsertRow(emp, isNew) {
-    const id = String(emp.ID);
-    let tr = rows[id];
+  function switchTab(tab) {
+    // Hide all tabs
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('active'));
+    // Show selected tab
+    document.getElementById(tab).classList.add('active');
+    event.target.classList.add('active');
+  }
 
-    // Remove empty placeholder if present
+  function upsertDeviceRow(dev, isNew) {
+    const id = String(dev.DEVICEID);
+    let tr = deviceRows[id];
+
     const empty = document.getElementById('empty-row');
     if (empty) empty.remove();
 
     if (!tr) {
       tr = document.createElement('tr');
       tr.id = 'row-' + id;
-      tbody.prepend(tr);
-      rows[id] = tr;
+      document.getElementById('devices-body').prepend(tr);
+      deviceRows[id] = tr;
     }
 
     tr.innerHTML = `
-      <td class="id-col">${fmt(emp.ID)}</td>
-      <td class="name-col">${fmt(emp.NAME)}</td>
-      <td class="dept-col">${fmt(emp.DEPARTMENT)}</td>
-      <td class="salary-col">${fmtSalary(emp.SALARY)}</td>
-      <td class="ts-col">${fmt(emp.HIRE_DATE)}</td>
-      <td class="ts-col">${fmtTs(emp.UPDATED_AT)}</td>
+      <td class="id-col">${fmt(dev.DEVICEID)}</td>
+      <td class="name-col">${fmt(dev.VENDOR)}</td>
+      <td class="dept-col">${fmt(dev.SERIALNUMBER)}</td>
+      <td class="salary-col">${parseFloat(dev.TEMPERATURE).toFixed(2)}°C</td>
+      <td class="salary-col">${parseFloat(dev.HUMIDITY).toFixed(2)}%</td>
+      <td class="salary-col">${parseFloat(dev.PRESSURE).toFixed(2)} hPa</td>
+      <td class="ts-col">${fmtTs(dev.UPDATEDAT)}</td>
     `;
 
-    // Flash animation
     tr.classList.remove('flash-new', 'flash-update');
-    void tr.offsetWidth; // reflow
+    void tr.offsetWidth;
     tr.classList.add(isNew ? 'flash-new' : 'flash-update');
 
-    document.getElementById('count').textContent = Object.keys(rows).length;
+    document.getElementById('count').textContent = Object.keys(deviceRows).length;
     document.getElementById('last-ts').textContent = new Date().toLocaleTimeString();
+  }
+
+  function initMetricCharts() {
+    METRICS.forEach(metric => {
+      if (metricCharts[metric]) return;
+      const canvas = document.getElementById(`canvas-${metric}`);
+      if (!canvas) return;
+      metricCharts[metric] = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: { labels: sharedLabels, datasets: [] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: true,
+              position: 'bottom',
+              labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 16 }
+            }
+          },
+          scales: { y: { beginAtZero: false } }
+        }
+      });
+    });
+  }
+
+  function updateAverageChart(avg) {
+    const deviceId = String(avg.DEVICEID);
+    const ts = new Date(avg.window_end).toLocaleTimeString();
+
+    initMetricCharts();
+
+    // Add new x-axis label if this window_end hasn't been seen
+    if (!sharedLabels.includes(ts)) {
+      sharedLabels.push(ts);
+      if (sharedLabels.length > 15) sharedLabels.shift();
+      // Pad all existing device arrays with null for the new slot
+      Object.values(deviceData).forEach(d => {
+        METRICS.forEach(m => { if (d[m].length < sharedLabels.length) d[m].push(null); });
+      });
+    }
+    const tsIdx = sharedLabels.indexOf(ts);
+
+    // Register new device — add a dataset to each chart
+    if (!deviceData[deviceId]) {
+      deviceData[deviceId] = {
+        temperature: new Array(sharedLabels.length).fill(null),
+        humidity:    new Array(sharedLabels.length).fill(null),
+        pressure:    new Array(sharedLabels.length).fill(null),
+      };
+      deviceOrder.push(deviceId);
+      const color = DEVICE_COLORS[(deviceOrder.length - 1) % DEVICE_COLORS.length];
+      METRICS.forEach(metric => {
+        if (!metricCharts[metric]) return;
+        metricCharts[metric].data.datasets.push({
+          label: deviceId,
+          data: deviceData[deviceId][metric],
+          borderColor: color,
+          backgroundColor: 'transparent',
+          tension: 0.3,
+          pointRadius: 2,
+          fill: false
+        });
+        metricCharts[metric].data.datasets.sort((a, b) => a.label.localeCompare(b.label));
+      });
+    }
+
+    // Write the data point
+    deviceData[deviceId].temperature[tsIdx] = parseFloat(avg.avg_temperature) ?? null;
+    deviceData[deviceId].humidity[tsIdx]    = parseFloat(avg.avg_humidity)    ?? null;
+    deviceData[deviceId].pressure[tsIdx]    = parseFloat(avg.avg_pressure)    ?? null;
+
+    METRICS.forEach(metric => { if (metricCharts[metric]) metricCharts[metric].update(); });
   }
 
   socket.on('connect', () => {
@@ -302,15 +486,32 @@
     document.getElementById('conn-label').textContent = 'Disconnected';
   });
 
-  socket.on('initial_state', (employees) => {
-    // Seed table with current snapshot
-    employees.forEach(emp => upsertRow(emp, !(String(emp.ID) in rows)));
+  socket.on('initial_devices', (devices) => {
+    devices.forEach(dev => upsertDeviceRow(dev, !(String(dev.DEVICEID) in deviceRows)));
   });
 
-  socket.on('employee_update', (emp) => {
+  socket.on('initial_averages', (history) => {
+    Object.entries(history).forEach(([deviceId, points]) => {
+      points.forEach(p => {
+        updateAverageChart({
+          DEVICEID: deviceId,
+          window_end: p.timestamp,
+          avg_temperature: p.avg_temperature,
+          avg_humidity: p.avg_humidity,
+          avg_pressure: p.avg_pressure
+        });
+      });
+    });
+  });
+
+  socket.on('device_update', (dev) => {
     eventCount++;
     document.getElementById('events').textContent = eventCount;
-    upsertRow(emp, emp._new === true);
+    upsertDeviceRow(dev, dev._new === true);
+  });
+
+  socket.on('average_update', (avg) => {
+    updateAverageChart(avg);
   });
 </script>
 </body>

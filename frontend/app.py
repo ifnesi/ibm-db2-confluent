@@ -1,18 +1,21 @@
 """
-Live employee dashboard — consumes from Kafka and pushes updates to browsers via WebSocket.
+Live IoT dashboard — consumes from Kafka (raw devices + averages) and pushes updates via WebSocket.
 """
 import io
-import json
 import os
+import json
+import time
 import struct
 import threading
-import time
-from decimal import Decimal
-
 import fastavro
 import requests
+
+from datetime import datetime
+from decimal import Decimal
+from collections import deque
+
 from confluent_kafka import Consumer, KafkaError
-from flask import Flask, render_template, request
+from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
@@ -20,11 +23,17 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "broker:29092")
 SCHEMA_REGISTRY_URL = os.environ.get("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")
-KAFKA_TOPIC = os.environ.get("KAFKA_TOPIC", "db2-EMPLOYEES")
+KAFKA_TOPIC_DEVICES = os.environ.get("KAFKA_TOPIC_DEVICES", "DB2INST1.IOT_DEVICES")
+KAFKA_TOPIC_AVG = os.environ.get("KAFKA_TOPIC_AVG", "IOT_DEVICES_AVG")
 
-# In-memory table: employee id (str) -> serializable dict
-employees: dict[str, dict] = {}
-employees_lock = threading.Lock()
+# In-memory storage: device id (str) -> serializable dict
+devices: dict[str, dict] = {}
+devices_lock = threading.Lock()
+
+# In-memory storage for averages (keep last 15 mins): device_id -> deque of {timestamp, temps, humidity, pressure}
+averages_history: dict[str, deque] = {}
+averages_lock = threading.Lock()
+MAX_HISTORY_POINTS = 15 * 60  # 15 minutes of 1-second updates (we'll store key points)
 
 schema_cache: dict[int, dict] = {}
 
@@ -82,12 +91,13 @@ def kafka_consumer_thread():
         {
             "bootstrap.servers": KAFKA_BOOTSTRAP,
             "group.id": "frontend-consumer-group",
+            "isolation.level": "read_uncommitted",
             "auto.offset.reset": "earliest",
             "enable.auto.commit": True,
         }
     )
-    consumer.subscribe([KAFKA_TOPIC])
-    print(f"Subscribed to {KAFKA_TOPIC}", flush=True)
+    consumer.subscribe([KAFKA_TOPIC_DEVICES, KAFKA_TOPIC_AVG])
+    print(f"Subscribed to {KAFKA_TOPIC_DEVICES} and {KAFKA_TOPIC_AVG}", flush=True)
 
     while True:
         msg = consumer.poll(1.0)
@@ -103,14 +113,32 @@ def kafka_consumer_thread():
             if record is None:
                 continue
             safe = to_json_safe(record)
-            emp_id = str(safe.get("ID", ""))
+            topic = msg.topic()
 
-            with employees_lock:
-                is_new = emp_id not in employees
-                employees[emp_id] = safe
-
-            safe["_new"] = is_new
-            socketio.emit("employee_update", safe)
+            if topic == KAFKA_TOPIC_DEVICES:
+                # Raw device data — DB2 column names are uppercase in Avro schema
+                device_id = str(safe.get("DEVICEID", ""))
+                with devices_lock:
+                    is_new = device_id not in devices
+                    devices[device_id] = safe
+                safe["_new"] = is_new
+                socketio.emit("device_update", safe)
+            elif topic == KAFKA_TOPIC_AVG:
+                # Average data — field names are lowercase (defined by Flink sink table)
+                device_id = str(safe.get("DEVICEID", ""))
+                with averages_lock:
+                    if device_id not in averages_history:
+                        averages_history[device_id] = deque(maxlen=MAX_HISTORY_POINTS)
+                    # Store the average point
+                    point = {
+                        "timestamp": safe.get("window_end", datetime.now().isoformat()),
+                        "avg_temperature": safe.get("avg_temperature", 0),
+                        "avg_humidity": safe.get("avg_humidity", 0),
+                        "avg_pressure": safe.get("avg_pressure", 0),
+                    }
+                    averages_history[device_id].append(point)
+                # Broadcast the average
+                socketio.emit("average_update", safe)
         except Exception as exc:
             print(f"Deserialization error: {exc}", flush=True)
 
@@ -121,16 +149,21 @@ def kafka_consumer_thread():
 
 @app.route("/")
 def index():
-    with employees_lock:
-        snapshot = list(employees.values())
-    return render_template("index.html", employees=snapshot)
+    with devices_lock:
+        devices_snapshot = list(devices.values())
+    with averages_lock:
+        averages_snapshot = {k: list(v) for k, v in averages_history.items()}
+    return render_template("index.html", devices=devices_snapshot, averages=averages_snapshot)
 
 
 @socketio.on("connect")
 def handle_connect():
-    with employees_lock:
-        snapshot = list(employees.values())
-    emit("initial_state", snapshot)
+    with devices_lock:
+        devices_snapshot = list(devices.values())
+    with averages_lock:
+        averages_snapshot = {k: list(v) for k, v in averages_history.items()}
+    emit("initial_devices", devices_snapshot)
+    emit("initial_averages", averages_snapshot)
 
 
 # ---------------------------------------------------------------------------
