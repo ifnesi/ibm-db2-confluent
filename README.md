@@ -31,10 +31,6 @@ A **data generator** container continuously inserts and updates up to 10 rows in
   ```bash
   brew install --cask docker
   ```
-- **`watch`** — used by `watch-db2.sh` to tail the DB2 table live
-  ```bash
-  brew install watch
-  ```
 - **Apple Silicon (M1/M2/M3):** Rosetta 2 handles the `linux/amd64` Db2 image automatically — no extra configuration needed
 
 ## Quick Start
