@@ -1,0 +1,29 @@
+{
+  "name": "db2-source-connector",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+    "tasks.max": "1",
+    "connection.url": "jdbc:db2://db2-luw:50000/testdb",
+    "connection.user": "db2inst1",
+    "connection.password": "db2inst1-pwd",
+    "mode": "timestamp+incrementing",
+    "incrementing.column.name": "ID",
+    "timestamp.column.name": "UPDATED_AT",
+    "table.whitelist": "DB2INST1.EMPLOYEES",
+    "validate.non.null": "false",
+    "topic.prefix": "db2-",
+    "poll.interval.ms": "1000",
+    "batch.max.rows": "100",
+    "table.poll.interval.ms": "60000",
+    "timestamp.delay.interval.ms": "0",
+    "db.timezone": "UTC",
+    "transforms": "createKey,extractInt",
+    "transforms.createKey.type": "org.apache.kafka.connect.transforms.ValueToKey",
+    "transforms.createKey.fields": "ID",
+    "transforms.extractInt.type": "org.apache.kafka.connect.transforms.ExtractField$Key",
+    "transforms.extractInt.field": "ID",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081"
+  }
+}

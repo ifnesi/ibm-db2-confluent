@@ -1,0 +1,15 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Demo (PostgreSQL)",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "PassFile": "/var/lib/pgadmin/pgpass",
+      "SSLMode": "prefer",
+      "Comment": "Confluent demo sink (IBM Db2 → Kafka → PostgreSQL)"
+    }
+  }
+}

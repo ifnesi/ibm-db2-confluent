@@ -1,0 +1,21 @@
+# Docker volumes
+db2-data/
+
+# Environment files (if they contain sensitive data)
+# .env
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Backup files
+*.bak
+*.backup
+
+# Made with Bob

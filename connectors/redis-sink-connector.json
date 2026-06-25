@@ -1,0 +1,25 @@
+{
+  "name": "redis-sink-connector",
+  "config": {
+    "connector.class": "com.redis.kafka.connect.RedisSinkConnector",
+    "tasks.max": "1",
+    "topics": "db2-EMPLOYEES",
+    "redis.uri": "redis://redis:6379",
+    "redis.command": "JSONSET",
+    "redis.key": "employee",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081",
+    "transforms": "castSalary,convertHireDate,convertUpdatedAt",
+    "transforms.castSalary.type": "org.apache.kafka.connect.transforms.Cast$Value",
+    "transforms.castSalary.spec": "SALARY:float64",
+    "transforms.convertHireDate.type": "org.apache.kafka.connect.transforms.TimestampConverter$Value",
+    "transforms.convertHireDate.field": "HIRE_DATE",
+    "transforms.convertHireDate.target.type": "string",
+    "transforms.convertHireDate.format": "yyyy-MM-dd",
+    "transforms.convertUpdatedAt.type": "org.apache.kafka.connect.transforms.TimestampConverter$Value",
+    "transforms.convertUpdatedAt.field": "UPDATED_AT",
+    "transforms.convertUpdatedAt.target.type": "string",
+    "transforms.convertUpdatedAt.format": "yyyy-MM-dd HH:mm:ss"
+  }
+}

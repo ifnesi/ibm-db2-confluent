@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IBM Db2 → Confluent → Live Dashboard</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    header {
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border-bottom: 1px solid #334155;
+      padding: 1.25rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    header .logo {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #38bdf8;
+      letter-spacing: -0.5px;
+    }
+
+    header .pipeline {
+      font-size: 0.85rem;
+      color: #64748b;
+    }
+
+    .pipeline span {
+      color: #94a3b8;
+    }
+
+    .status-bar {
+      display: flex;
+      gap: 2rem;
+      padding: 0.75rem 2rem;
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+      font-size: 0.8rem;
+      align-items: center;
+    }
+
+    .stat { display: flex; gap: 0.4rem; align-items: center; }
+    .stat-label { color: #64748b; }
+    .stat-value { color: #e2e8f0; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+    #conn-indicator {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #ef4444;
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    #conn-indicator.connected { background: #22c55e; }
+
+    .main {
+      padding: 1.5rem 2rem;
+    }
+
+    .fanout-badges {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      padding: 0.35rem 0.9rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      border: 1px solid;
+    }
+    .badge-source  { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+    .badge-kafka   { background: #1a1a2e; border-color: #a855f7; color: #d8b4fe; }
+    .badge-pg      { background: #1a2e1e; border-color: #22c55e; color: #86efac; }
+    .badge-redis   { background: #2e1a1a; border-color: #ef4444; color: #fca5a5; }
+    .badge-live    { background: #1e2a3a; border-color: #38bdf8; color: #7dd3fc; }
+
+    .table-wrapper {
+      border: 1px solid #334155;
+      border-radius: 0.5rem;
+      overflow-y: auto;
+      max-height: calc(100vh - 260px);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    thead tr {
+      background: #1e293b;
+      border-bottom: 2px solid #334155;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #1e293b;
+      z-index: 1;
+      padding: 0.75rem 1rem;
+      text-align: left;
+      font-weight: 600;
+      color: #94a3b8;
+      text-transform: uppercase;
+      font-size: 0.7rem;
+      letter-spacing: 0.05em;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid #1e293b;
+      transition: background 0.2s;
+    }
+
+    tbody tr:hover { background: #1e293b88; }
+
+    td {
+      padding: 0.65rem 1rem;
+      color: #cbd5e1;
+      font-variant-numeric: tabular-nums;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    td.id-col { color: #38bdf8; font-weight: 600; }
+    td.name-col { color: #e2e8f0; font-weight: 500; }
+    td.dept-col { color: #94a3b8; }
+    td.salary-col { color: #4ade80; }
+    td.ts-col { color: #64748b; font-size: 0.78rem; }
+
+    @keyframes flash-new {
+      0%   { background: #0f2e1a; }
+      60%  { background: #14532d44; }
+      100% { background: transparent; }
+    }
+    @keyframes flash-update {
+      0%   { background: #1a2e40; }
+      60%  { background: #0c4a6e44; }
+      100% { background: transparent; }
+    }
+
+    tr.flash-new    { animation: flash-new    1.2s ease-out forwards; }
+    tr.flash-update { animation: flash-update 1.2s ease-out forwards; }
+
+    .empty-msg {
+      text-align: center;
+      padding: 3rem;
+      color: #475569;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">&#9889; Live Pipeline Demo</div>
+  <div class="pipeline">
+    <span>IBM Db2</span> → <span>Confluent Platform</span> → PostgreSQL / Redis / <span style="color:#38bdf8">WebSocket</span>
+  </div>
+</header>
+
+<div class="status-bar">
+  <div class="stat">
+    <div id="conn-indicator"></div>
+    <span id="conn-label" class="stat-label">Disconnected</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Records:</span>
+    <span class="stat-value" id="count">0</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Events received:</span>
+    <span class="stat-value" id="events">0</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Last update:</span>
+    <span class="stat-value" id="last-ts">—</span>
+  </div>
+</div>
+
+<div class="main">
+  <div class="fanout-badges">
+    <span class="badge badge-source">Source: IBM Db2/LUW</span>
+    <span class="badge badge-kafka">Confluent Platform (Kafka + SR)</span>
+    <span class="badge badge-pg">Sink 1: PostgreSQL</span>
+    <span class="badge badge-redis">Sink 2: Redis</span>
+    <span class="badge badge-live">Sink 3: Live Dashboard ←</span>
+  </div>
+
+  <div class="table-wrapper">
+    <table id="emp-table">
+      <thead>
+        <tr>
+          <th style="width:6%">ID</th>
+          <th style="width:22%">Name</th>
+          <th style="width:20%">Department</th>
+          <th style="width:14%">Salary</th>
+          <th style="width:16%">Hire Date</th>
+          <th style="width:22%">Updated At</th>
+        </tr>
+      </thead>
+      <tbody id="emp-body">
+        {% if employees %}
+          {% for emp in employees %}
+          <tr id="row-{{ emp.ID }}">
+            <td class="id-col">{{ emp.ID }}</td>
+            <td class="name-col">{{ emp.NAME }}</td>
+            <td class="dept-col">{{ emp.DEPARTMENT }}</td>
+            <td class="salary-col">${{ "%.2f"|format(emp.SALARY|float) }}</td>
+            <td class="ts-col">{{ emp.HIRE_DATE }}</td>
+            <td class="ts-col">{{ emp.UPDATED_AT }}</td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          <tr id="empty-row"><td colspan="6" class="empty-msg">Waiting for data from Kafka…</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  const socket = io();
+  const tbody = document.getElementById('emp-body');
+  let eventCount = 0;
+  const rows = {};  // id -> tr element
+
+  {% if employees %}
+  {% for emp in employees %}
+  rows['{{ emp.ID }}'] = document.getElementById('row-{{ emp.ID }}');
+  {% endfor %}
+  {% endif %}
+
+  function fmt(val) {
+    return val !== null && val !== undefined ? String(val) : '—';
+  }
+
+  function fmtSalary(val) {
+    const n = parseFloat(val);
+    return isNaN(n) ? '—' : '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  }
+
+  function fmtTs(val) {
+    if (!val) return '—';
+    // ISO string from Python datetime.isoformat()
+    return String(val).replace('T', ' ').substring(0, 19);
+  }
+
+  function upsertRow(emp, isNew) {
+    const id = String(emp.ID);
+    let tr = rows[id];
+
+    // Remove empty placeholder if present
+    const empty = document.getElementById('empty-row');
+    if (empty) empty.remove();
+
+    if (!tr) {
+      tr = document.createElement('tr');
+      tr.id = 'row-' + id;
+      tbody.prepend(tr);
+      rows[id] = tr;
+    }
+
+    tr.innerHTML = `
+      <td class="id-col">${fmt(emp.ID)}</td>
+      <td class="name-col">${fmt(emp.NAME)}</td>
+      <td class="dept-col">${fmt(emp.DEPARTMENT)}</td>
+      <td class="salary-col">${fmtSalary(emp.SALARY)}</td>
+      <td class="ts-col">${fmt(emp.HIRE_DATE)}</td>
+      <td class="ts-col">${fmtTs(emp.UPDATED_AT)}</td>
+    `;
+
+    // Flash animation
+    tr.classList.remove('flash-new', 'flash-update');
+    void tr.offsetWidth; // reflow
+    tr.classList.add(isNew ? 'flash-new' : 'flash-update');
+
+    document.getElementById('count').textContent = Object.keys(rows).length;
+    document.getElementById('last-ts').textContent = new Date().toLocaleTimeString();
+  }
+
+  socket.on('connect', () => {
+    document.getElementById('conn-indicator').classList.add('connected');
+    document.getElementById('conn-label').textContent = 'Connected';
+  });
+
+  socket.on('disconnect', () => {
+    document.getElementById('conn-indicator').classList.remove('connected');
+    document.getElementById('conn-label').textContent = 'Disconnected';
+  });
+
+  socket.on('initial_state', (employees) => {
+    // Seed table with current snapshot
+    employees.forEach(emp => upsertRow(emp, !(String(emp.ID) in rows)));
+  });
+
+  socket.on('employee_update', (emp) => {
+    eventCount++;
+    document.getElementById('events').textContent = eventCount;
+    upsertRow(emp, emp._new === true);
+  });
+</script>
+</body>
+</html>
