@@ -656,7 +656,10 @@
       // Update node labels (e.g. Flink status changes) and edge labels without re-layout
       data.nodes.forEach(n => {
         const el = cy.getElementById(n.data.id);
-        if (el.length) el.data('label', n.data.label);
+        if (el.length) {
+          el.data('label', n.data.label);
+          el.data('detail', n.data.detail);
+        }
       });
       data.edges.forEach(e => {
         const el = cy.getElementById(e.data.id);
