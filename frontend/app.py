@@ -282,8 +282,7 @@ def connector_status(connector_name: str):
             svc = get_lineage_service()
             topic_list = [t.strip() for t in topics_val.split(",") if t.strip()]
             for topic in topic_list:
-                end_offsets = svc.get_end_offsets(topic)
-                lag = svc.get_lag(consumer_group, topic, end_offsets)
+                lag = svc.get_lag(consumer_group, topic)
                 config_rows.append({"label": f"Lag · {topic}", "value": lag})
 
         return jsonify({
@@ -311,8 +310,7 @@ def webapp_status():
         svc = get_lineage_service()
         lag = {}
         for topic in topics:
-            end_offsets = svc.get_end_offsets(topic)
-            lag[topic] = svc.get_lag("frontend-consumer-group", topic, end_offsets)
+            lag[topic] = svc.get_lag("frontend-consumer-group", topic)
 
         return jsonify({
             "consumer_group": "frontend-consumer-group",

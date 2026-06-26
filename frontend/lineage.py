@@ -5,17 +5,14 @@ import os
 import time
 import requests
 
-from collections import deque
 from typing import Dict, List, Any, Optional
-from confluent_kafka.admin import AdminClient
-from confluent_kafka import Consumer, TopicPartition
 
-KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "broker:29092")
+
 KAFKA_CONNECT_URL = os.environ.get("KAFKA_CONNECT_URL", "http://connect:8083")
 FLINK_URL = os.environ.get("FLINK_URL", "http://flink-jobmanager:9081")
+PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090")
 
 TARGET_TOPICS = {"DB2INST1.IOT_DEVICES", "IOT_DEVICES_AVG"}
-THROUGHPUT_WINDOW_SECS = 30
 
 
 def fmt_bytes(bps: float) -> str:
@@ -25,92 +22,62 @@ def fmt_bytes(bps: float) -> str:
 
 
 class LineageService:
-    def __init__(self):
-        self.admin_client = AdminClient({"bootstrap.servers": KAFKA_BOOTSTRAP})
-        # Rolling window: topic -> deque of (timestamp, total_offset) tuples
-        self.offset_history: Dict[str, deque] = {}
 
-    # ------------------------------------------------------------------
-    # Kafka helpers
-    # ------------------------------------------------------------------
+    def get_lag(self, group_id: str, topic: str) -> int:
+        """Total consumer lag for group on topic, via Prometheus."""
+        promql = (
+            f'sum(io_confluent_kafka_server_tenant_consumer_lag_offsets{{'
+            f'consumer_group="{group_id}",topic="{topic}"}})'
+        )
+        value = self._query_prometheus(promql)
+        return int(value) if value is not None else 0
 
-    def _consumer(self, group_id: str = "__lineage-probe__") -> Consumer:
-        return Consumer({
-            "bootstrap.servers": KAFKA_BOOTSTRAP,
-            "group.id": group_id,
-            "enable.auto.commit": False,
-        })
-
-    def get_end_offsets(self, topic: str) -> Dict[int, int]:
-        """Return {partition: high_watermark} for topic."""
+    def _query_prometheus(self, promql: str) -> Optional[float]:
+        """Run an instant PromQL query and return the first scalar result."""
         try:
-            c = self._consumer()
-            meta = c.list_topics(topic, timeout=5)
-            if topic not in meta.topics:
-                c.close()
-                return {}
-            result = {}
-            for pid in meta.topics[topic].partitions:
-                low, high = c.get_watermark_offsets(TopicPartition(topic, pid), timeout=5)
-                result[pid] = high
-            c.close()
-            return result
+            resp = requests.get(
+                f"{PROMETHEUS_URL}/api/v1/query",
+                params={"query": promql},
+                timeout=5,
+            )
+            resp.raise_for_status()
+            results = resp.json().get("data", {}).get("result", [])
+            if results:
+                return float(results[0]["value"][1])
         except Exception as e:
-            print(f"[lineage] end_offsets {topic}: {e}")
-            return {}
+            print(f"[lineage] prometheus query '{promql}': {e}")
+        return None
 
-    def get_lag(self, group_id: str, topic: str, end_offsets: Dict[int, int]) -> int:
-        """Total consumer lag for group on topic."""
-        if not end_offsets:
-            return 0
-        try:
-            c = self._consumer(group_id)
-            tps = [TopicPartition(topic, pid) for pid in end_offsets]
-            committed = c.committed(tps, timeout=5)
-            c.close()
-            total = 0
-            for tp in committed:
-                end = end_offsets.get(tp.partition, 0)
-                offset = max(0, tp.offset) if tp.offset and tp.offset >= 0 else 0
-                total += max(0, end - offset)
-            return total
-        except Exception as e:
-            print(f"[lineage] lag {group_id}/{topic}: {e}")
-            return 0
+    def get_topic_metrics(self, topic: str) -> Dict[str, Any]:
+        """Fetch produce/fetch request rates, storage, and partition count for a topic from Prometheus."""
+        rate_metrics = {
+            "produce_requests_per_sec": "io_confluent_kafka_server_broker_topic_total_produce_requests_rate_1_min",
+            "failed_produce_requests_per_sec": "io_confluent_kafka_server_broker_topic_failed_produce_requests_rate_1_min",
+            "failed_fetch_requests_per_sec": "io_confluent_kafka_server_broker_topic_failed_fetch_requests_rate_1_min",
+        }
+        result = {}
+        for key, metric in rate_metrics.items():
+            value = self._query_prometheus(f'{metric}{{topic="{topic}"}}')
+            result[key] = round(value, 2) if value is not None else 0.0
+
+        log_size = self._query_prometheus(f'code:io_confluent_kafka_server_log_size_by_topic:total{{topic="{topic}"}}')
+        result["log_size_bytes"] = int(log_size) if log_size is not None else 0
+
+        partitions = self._query_prometheus(f'code:io_confluent_kafka_server_partition_count_by_topic:total{{topic="{topic}"}}')
+        result["partition_count"] = int(partitions) if partitions is not None else 0
+
+        return result
 
     def compute_throughputs(self) -> Dict[str, float]:
-        """
-        Bytes/sec per topic as a 30-second rolling average.
-        Keeps a deque of (timestamp, total_offset) samples; computes rate from oldest
-        sample still within the window to the current sample.
-        """
-        now = time.time()
+        """Bytes/sec per topic from Confluent telemetry (broker_topic_bytes_in_rate_1_min)."""
         result = {}
         for topic in TARGET_TOPICS:
-            current = self.get_end_offsets(topic)
-            total_offset = sum(current.values()) if current else 0
-
-            if topic not in self.offset_history:
-                self.offset_history[topic] = deque()
-
-            history = self.offset_history[topic]
-            history.append((now, total_offset))
-
-            # Drop samples older than the rolling window
-            cutoff = now - THROUGHPUT_WINDOW_SECS
-            while history and history[0][0] < cutoff:
-                history.popleft()
-
-            if len(history) < 2:
-                result[topic] = 0.0
-                continue
-
-            oldest_ts, oldest_offset = history[0]
-            dt = max(0.5, now - oldest_ts)
-            delta = max(0, total_offset - oldest_offset)
-            # Avro IoT messages average ~512 bytes
-            result[topic] = round((delta * 512) / dt, 2)
-
+            promql = (
+                f'io_confluent_kafka_server_broker_topic_bytes_in_rate_1_min{{'
+                f'topic="{topic}"}}'
+            )
+            value = self._query_prometheus(promql)
+            result[topic] = round(value, 2) if value is not None else 0.0
         return result
 
     # ------------------------------------------------------------------
@@ -168,7 +135,6 @@ class LineageService:
         connectors = self.get_connectors()
         flink_jobs = self.get_flink_jobs()
         throughputs = self.compute_throughputs()
-        end_offsets = {t: self.get_end_offsets(t) for t in TARGET_TOPICS}
 
         sinks = {k: v for k, v in connectors.items() if v["type"] == "sink"}
 
@@ -184,9 +150,14 @@ class LineageService:
         # --- TOPICS ---
         for topic in TARGET_TOPICS:
             nid = f"topic-{topic}"
+            extra = self.get_topic_metrics(topic)
             nodes.append({"data": {
                 "id": nid, "label": topic, "type": "topic",
-                "detail": {"topic": topic, "throughput_bytes_per_sec": throughputs.get(topic, 0)}
+                "detail": {
+                    "topic": topic,
+                    "throughput_bytes_per_sec": throughputs.get(topic, 0),
+                    **extra,
+                }
             }})
             node_ids[topic] = nid
 
@@ -208,7 +179,7 @@ class LineageService:
         for sink_name, sink_info in sinks.items():
             group_id = f"connect-{sink_name}"
             total_lag = sum(
-                self.get_lag(group_id, t, end_offsets.get(t, {}))
+                self.get_lag(group_id, t)
                 for t in sink_info["topics"]
             )
             label = sink_name.replace("-iot-devices-sink", "").replace("-", " ").title()
@@ -225,8 +196,8 @@ class LineageService:
 
         # --- WEBAPP CONSUMER (static node — always present) ---
         webapp_group = "frontend-consumer-group"
-        webapp_lag_devices = self.get_lag(webapp_group, "DB2INST1.IOT_DEVICES", end_offsets.get("DB2INST1.IOT_DEVICES", {}))
-        webapp_lag_avg = self.get_lag(webapp_group, "IOT_DEVICES_AVG", end_offsets.get("IOT_DEVICES_AVG", {}))
+        webapp_lag_devices = self.get_lag(webapp_group, "DB2INST1.IOT_DEVICES")
+        webapp_lag_avg = self.get_lag(webapp_group, "IOT_DEVICES_AVG")
         nodes.append({"data": {
             "id": "webapp-consumer", "label": "WebApp\nDashboard", "type": "sink",
             "detail": {
@@ -273,7 +244,7 @@ class LineageService:
                 if topic not in node_ids or sink_name not in node_ids:
                     continue
                 tp = throughputs.get(topic, 0)
-                lag = self.get_lag(group_id, topic, end_offsets.get(topic, {}))
+                lag = self.get_lag(group_id, topic)
                 lag_str = f" | Lag: {lag}" if lag else ""
                 edges.append({"data": {
                     "id": f"edge-{topic}-{sink_name}",

@@ -606,6 +606,13 @@
       ]
     });
 
+    cy.on('mouseover', 'node', function () {
+      document.getElementById('lineage-container').style.cursor = 'pointer';
+    });
+    cy.on('mouseout', 'node', function () {
+      document.getElementById('lineage-container').style.cursor = 'default';
+    });
+
     cy.on('tap', 'node', function (evt) {
       const node = evt.target;
       const type = node.data('type');
@@ -697,7 +704,7 @@
     if (nodeType === 'topic') {
       document.getElementById('modal-title').textContent = nodeData.topic;
       fetch(`/api/topic/${encodeURIComponent(nodeData.topic)}/last-message`)
-        .then(r => r.json()).then(renderTopicModal).catch(err => renderError(String(err)));
+        .then(r => r.json()).then(msg => renderTopicModal(msg, nodeData)).catch(err => renderError(String(err)));
     } else if (nodeType === 'source' || nodeType === 'sink') {
       document.getElementById('modal-title').textContent = nodeData.connector;
       fetch(`/api/connector/${encodeURIComponent(nodeData.connector)}/status`)
@@ -726,10 +733,43 @@
     </div>`;
   }
 
-  function renderTopicModal(data) {
+  function renderTopicModal(data, nodeData) {
     if (data.error) { renderError(data.error); return; }
     document.getElementById('modal-badge').innerHTML = `<span style="color:#94a3b8;font-size:0.8rem;">Offset: ${data.offset}</span>`;
-    document.getElementById('modal-body').innerHTML =
+
+    const fmt = v => v > 0 ? v.toFixed(2) : '0';
+    const fmtBytes = b => b >= 1048576 ? (b/1048576).toFixed(1) + ' MB' : b >= 1024 ? (b/1024).toFixed(1) + ' KB' : b + ' B';
+    const hasErrors = nodeData.failed_produce_requests_per_sec > 0 || nodeData.failed_fetch_requests_per_sec > 0;
+    const metricsHtml = `
+      <div style="padding:0.6rem 1.25rem;border-bottom:1px solid #1e293b;background:#0f172a;">
+        <div style="color:#64748b;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.4rem;">Live Metrics (1-min rate)</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:0.5rem;">
+          <div style="background:#1e293b;border-radius:6px;padding:0.5rem 0.75rem;text-align:center;">
+            <div style="color:#38bdf8;font-size:1rem;font-weight:700;">${fmt(nodeData.throughput_bytes_per_sec / 1024)} KB/s</div>
+            <div style="color:#64748b;font-size:0.7rem;margin-top:0.2rem;">Bytes In</div>
+          </div>
+          <div style="background:#1e293b;border-radius:6px;padding:0.5rem 0.75rem;text-align:center;">
+            <div style="color:#a78bfa;font-size:1rem;font-weight:700;">${fmt(nodeData.produce_requests_per_sec)} /s</div>
+            <div style="color:#64748b;font-size:0.7rem;margin-top:0.2rem;">Produce Req/s</div>
+          </div>
+          <div style="background:#1e293b;border-radius:6px;padding:0.5rem 0.75rem;text-align:center;">
+            <div style="color:${hasErrors ? '#ef4444' : '#10b981'};font-size:1rem;font-weight:700;">
+              ${fmt(nodeData.failed_produce_requests_per_sec + nodeData.failed_fetch_requests_per_sec)} /s
+            </div>
+            <div style="color:#64748b;font-size:0.7rem;margin-top:0.2rem;">Errors/s</div>
+          </div>
+          <div style="background:#1e293b;border-radius:6px;padding:0.5rem 0.75rem;text-align:center;">
+            <div style="color:#fb923c;font-size:1rem;font-weight:700;">${fmtBytes(nodeData.log_size_bytes || 0)}</div>
+            <div style="color:#64748b;font-size:0.7rem;margin-top:0.2rem;">Storage</div>
+          </div>
+          <div style="background:#1e293b;border-radius:6px;padding:0.5rem 0.75rem;text-align:center;">
+            <div style="color:#facc15;font-size:1rem;font-weight:700;">${nodeData.partition_count || 0}</div>
+            <div style="color:#64748b;font-size:0.7rem;margin-top:0.2rem;">Partitions</div>
+          </div>
+        </div>
+      </div>`;
+
+    document.getElementById('modal-body').innerHTML = metricsHtml +
       `<div style="padding:0.75rem 1.25rem;border-bottom:1px solid #1e293b;background:#162032;">
          <div style="color:#64748b;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;">Key</div>
          <div style="color:#fbbf24;font-family:monospace;font-size:0.9rem;margin-top:0.2rem;word-break:break-all;">${data.key || '(null)'}</div>
