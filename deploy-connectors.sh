@@ -126,8 +126,8 @@ wait_for_schema_registry
 wait_for_db2
 
 deploy "db2-source-connector" "connectors/db2-source-connector.json"
-deploy "postgres-sink"        "connectors/postgres-sink-connector.json"
-deploy "redis-sink"           "connectors/redis-sink-connector.json"
+deploy "postgres-iot-devices-sink" "connectors/postgres-sink-connector.json"
+deploy "redis-iot-devices-sink"    "connectors/redis-sink-connector.json"
 
 echo ""
 echo "Waiting for connectors to start..."
@@ -136,8 +136,8 @@ sleep 8
 echo ""
 echo "Checking and recovering any FAILED connectors..."
 restart_if_failed "db2-source-connector"
-restart_if_failed "postgres-sink"
-restart_if_failed "redis-sink"
+restart_if_failed "postgres-iot-devices-sink"
+restart_if_failed "redis-iot-devices-sink"
 
 echo ""
 echo "=== Final status ==="

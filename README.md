@@ -1,12 +1,12 @@
 # IoT Devices → Confluent Platform → Flink - Live Pipeline Demo
 
-This demo shows how to build a **live data pipeline** from IBM Db2 (IoT source) through Confluent Platform, with **Flink stream processing** to calculate 1-minute rolling averages, and a **1:3 fanout** to PostgreSQL, Redis, and a Python/React frontend. The pipeline is fully containerized and runs locally using Docker Compose.
+This demo shows how to build a **live data pipeline** from IBM Db2 (IoT source) through Confluent Platform, with **Flink stream processing** to calculate 15-second rolling averages, and a **1:3 fanout** to PostgreSQL, Redis, and a Python/React frontend. The pipeline is fully containerized and runs locally using Docker Compose.
 
 ## Architecture
 
 ![Architecture Diagram](./imgs/demo-diagram.png)
 
-A **data generator** container creates 10 IoT devices at startup, then continuously makes small incremental sensor value changes (~1 per second). Raw data flows through Confluent to all three sinks simultaneously. In parallel, **Flink** calculates 1-minute rolling averages per device/metric and writes results to a separate topic, which is also consumed by all three sinks. The **frontend** has two tabs: one shows the live device data table, the other shows line charts of the last 15 minutes of averages.
+A **data generator** container creates 10 IoT devices at startup, then continuously updates all three sensor values (temperature, humidity, pressure) for a randomly selected device every 0.5 seconds. Raw data flows through Confluent to all three sinks simultaneously. In parallel, **Flink** calculates 15-second tumbling window averages per device/metric and writes results to a separate topic, which is also consumed by all three sinks. The **frontend** has three tabs: live device data table, line charts of the last 15 minutes of averages, and a real-time **data lineage graph** showing the full pipeline topology with throughput metrics.
 
 ## Prerequisites
 
@@ -114,8 +114,8 @@ This submits the Flink INSERT job, which starts calculating 1-minute tumbling wi
 
 Two topics are created automatically by the pipeline:
 
-1. **`DB2INST1.IOT_DEVICES`** — Raw device data from Db2 source connector (~1 update/sec)
-2. **`IOT_DEVICES_AVG`** — 1-minute tumbling window averages from Flink (~1 update/min per device)
+1. **`DB2INST1.IOT_DEVICES`** — Raw device data from Db2 source connector (~2 updates/sec, polled every 500 ms)
+2. **`IOT_DEVICES_AVG`** — 15-second tumbling window averages from Flink (~1 update/15 sec per device)
 
 ![Topics in Control Center](./imgs/kafka-topics-created.png)
 
@@ -146,8 +146,13 @@ docker exec schema-registry kafka-avro-console-consumer \
 # Check consumer group lag
 docker exec broker kafka-consumer-groups \
   --bootstrap-server localhost:9092 \
-  --group connect-postgres-sink \
+  --group connect-postgres-iot-devices-sink \
   --describe
+
+# Check all consumer groups
+docker exec broker kafka-consumer-groups \
+  --bootstrap-server localhost:9092 \
+  --list
 ```
 
 ### PostgreSQL (`localhost:5432`)
@@ -199,13 +204,19 @@ The frontend automatically consumes from both Kafka topics and displays live dat
 
 ![Frontend devices table](./imgs/frontend-table.png)
 
-**Average Charts** — 1-minute rolling averages per metric, one line per device:
+**Average Charts** — 15-second rolling averages per metric, one line per device:
 
 ![Frontend average charts](./imgs/frontend-charts.png)
+
+**Data Lineage** — live pipeline topology graph showing nodes (DB2 Source → Kafka Topics → Flink → Sinks) with real-time bytes/sec throughput (30-second rolling average) and consumer lag per edge:
+
+![Frontend data lineage](./imgs/frontend-data-lineage.png)
 
 Data updates via WebSocket in real-time. Connection status and event counts shown in the status bar.
 
 ## Connector Management
+
+Three connectors are deployed: `db2-source-connector`, `postgres-iot-devices-sink`, and `redis-iot-devices-sink`.
 
 ```bash
 # Status of all connectors
@@ -232,6 +243,10 @@ docker logs flink-jobmanager
 ```
 
 The Flink table definitions (`iot_devices_source` and `iot_devices_avg`) and the INSERT job are both submitted by `deploy-flink-job.sh`. The script uses the `flink-sql-client` container to run the SQL non-interactively.
+
+The job uses a **15-second tumbling window** on the `UPDATEDAT` watermark, producing averages for each device every 15 seconds. Results are written to `IOT_DEVICES_AVG` via upsert-kafka with Avro encoding.
+
+> **Note:** Flink tracks its read position using its own state backend, not Kafka's `__consumer_offsets`. Consumer group lag shown in the Data Lineage tab is therefore omitted for the IOT_DEVICES→Flink edge — it is not meaningful for Flink sources.
 
 ## Troubleshooting
 

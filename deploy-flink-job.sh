@@ -65,13 +65,13 @@ CREATE TABLE `iot_devices_avg` (
 INSERT INTO `iot_devices_avg`
 SELECT
     `DEVICEID`,
-    TUMBLE_START(`UPDATEDAT`, INTERVAL '1' MINUTE) AS `window_start`,
-    TUMBLE_END(`UPDATEDAT`, INTERVAL '1' MINUTE)   AS `window_end`,
+    TUMBLE_START(`UPDATEDAT`, INTERVAL '15' SECOND) AS `window_start`,
+    TUMBLE_END(`UPDATEDAT`, INTERVAL '15' SECOND)   AS `window_end`,
     ROUND(AVG(`TEMPERATURE`), 2) AS `avg_temperature`,
     ROUND(AVG(`HUMIDITY`), 2)    AS `avg_humidity`,
     ROUND(AVG(`PRESSURE`), 2)    AS `avg_pressure`
 FROM `iot_devices_source`
-GROUP BY `DEVICEID`, TUMBLE(`UPDATEDAT`, INTERVAL '1' MINUTE);
+GROUP BY `DEVICEID`, TUMBLE(`UPDATEDAT`, INTERVAL '15' SECOND);
 EOF
 
 # Copy SQL into the sql-client container and execute

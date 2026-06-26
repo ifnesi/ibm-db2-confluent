@@ -6,6 +6,9 @@
   <title>IoT Devices → Confluent → Live Dashboard</title>
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+  <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+  <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+  <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -263,7 +266,7 @@
   <div class="fanout-badges">
     <span class="badge badge-source">Source: IBM Db2/LUW</span>
     <span class="badge badge-kafka">Confluent Platform (Kafka + SR)</span>
-    <span class="badge badge-kafka">Flink (1-min averages)</span>
+    <span class="badge badge-kafka">Flink (15-sec averages)</span>
     <span class="badge badge-pg">Sink 1: PostgreSQL</span>
     <span class="badge badge-redis">Sink 2: Redis</span>
     <span class="badge badge-live">Sink 3: Live Dashboard ←</span>
@@ -272,6 +275,7 @@
   <div class="tabs">
     <button class="tab-button active" onclick="switchTab('devices')">Devices Table</button>
     <button class="tab-button" onclick="switchTab('averages')">Average Charts (15 min)</button>
+    <button class="tab-button" onclick="switchTab('lineage')">Data Lineage</button>
   </div>
 
   <!-- Tab 1: Devices Table -->
@@ -329,6 +333,15 @@
     </div>
     </div>
   </div>
+
+  <!-- Tab 3: Data Lineage -->
+  <div id="lineage" class="tab-content">
+    <div id="lineage-container" style="width: 100%; height: 600px; background: #1e293b; border: 1px solid #334155; border-radius: 8px; margin-top: 1rem;"></div>
+    <div id="lineage-details" style="margin-top: 1rem; padding: 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; display: none;">
+      <h3 id="detail-title" style="color: #38bdf8; margin-bottom: 0.5rem;"></h3>
+      <pre id="detail-content" style="color: #e2e8f0; font-size: 0.8rem; overflow: auto; max-height: 200px;"></pre>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -369,6 +382,19 @@
     // Show selected tab
     document.getElementById(tab).classList.add('active');
     event.target.classList.add('active');
+
+    // If switching to lineage tab, trigger load and polling
+    if (tab === 'lineage') {
+      if (!lineageUpdateInterval) {
+        updateLineage();
+        lineageUpdateInterval = setInterval(updateLineage, 1000);
+      }
+    } else {
+      if (lineageUpdateInterval) {
+        clearInterval(lineageUpdateInterval);
+        lineageUpdateInterval = null;
+      }
+    }
   }
 
   function upsertDeviceRow(dev, isNew) {
@@ -513,6 +539,125 @@
   socket.on('average_update', (avg) => {
     updateAverageChart(avg);
   });
+
+  // --- Data Lineage via WebSocket ---
+  let cy = null;
+
+  function initLineage() {
+    if (cy) return;
+    cy = cytoscape({
+      container: document.getElementById('lineage-container'),
+      style: [
+        {
+          selector: 'node',
+          style: {
+            'content': 'data(label)',
+            'text-valign': 'center',
+            'text-halign': 'center',
+            'font-size': '12px',
+            'color': '#e2e8f0',
+            'text-wrap': 'wrap',
+            'text-max-width': '150px',
+            'padding': '20px',
+            'border-width': '2px',
+            'border-color': '#334155'
+          }
+        },
+        { selector: 'node[type="source"]', style: { 'background-color': '#f97316', 'border-color': '#ea580c' } },
+        { selector: 'node[type="topic"]', style: { 'background-color': '#3b82f6', 'border-color': '#1d4ed8' } },
+        { selector: 'node[type="processor"]', style: { 'background-color': '#8b5cf6', 'border-color': '#7c3aed' } },
+        { selector: 'node[type="sink"]', style: { 'background-color': '#10b981', 'border-color': '#059669' } },
+        {
+          selector: 'edge',
+          style: {
+            'line-color': '#475569',
+            'target-arrow-color': '#475569',
+            'target-arrow-shape': 'triangle',
+            'curve-style': 'bezier',
+            'width': '2px',
+            'content': 'data(label)',
+            'font-size': '10px',
+            'color': '#cbd5e1',
+            'text-wrap': 'wrap',
+            'text-max-width': '120px',
+            'text-background-color': '#0f172a',
+            'text-background-opacity': 1,
+            'text-background-padding': '4px',
+            'text-background-shape': 'round-rectangle',
+            'text-border-opacity': 1,
+            'text-border-width': '1px',
+            'text-border-color': '#334155',
+          }
+        }
+      ]
+    });
+
+    cy.on('tap', 'node', function (evt) {
+      const node = evt.target;
+      const detail = node.data('detail');
+      document.getElementById('detail-title').textContent = node.data('label');
+      document.getElementById('detail-content').textContent = JSON.stringify(detail, null, 2);
+      document.getElementById('lineage-details').style.display = 'block';
+    });
+
+    cy.on('tap', function (evt) {
+      if (evt.target === cy) {
+        document.getElementById('lineage-details').style.display = 'none';
+      }
+    });
+  }
+
+  let lineageInitialized = false;
+
+  function updateLineageGraph(data) {
+    if (!cy) initLineage();
+
+    const incomingNodeIds = new Set(data.nodes.map(n => n.data.id));
+    const currentNodeIds = new Set(cy.nodes().map(n => n.id()));
+    const nodeCountChanged = incomingNodeIds.size !== currentNodeIds.size ||
+      [...incomingNodeIds].some(id => !currentNodeIds.has(id));
+
+    if (lineageInitialized && !nodeCountChanged) {
+      // Update node labels (e.g. Flink status changes) and edge labels without re-layout
+      data.nodes.forEach(n => {
+        const el = cy.getElementById(n.data.id);
+        if (el.length) el.data('label', n.data.label);
+      });
+      data.edges.forEach(e => {
+        const el = cy.getElementById(e.data.id);
+        if (el.length) {
+          el.data('label', e.data.label);
+          el.data('lag', e.data.lag);
+          el.data('throughput', e.data.throughput);
+        }
+      });
+      return;
+    }
+
+    // Full re-render: new nodes appeared or first load
+    cy.elements().remove();
+    cy.add(data.nodes);
+    cy.add(data.edges);
+    cy.layout({
+      name: 'dagre',
+      rankDir: 'LR',
+      nodeSep: 90,
+      rankSep: 180,
+      spacingFactor: 1.8,
+      edgeSep: 20,
+      animate: false,
+    }).run();
+    cy.fit(cy.elements(), 40);
+    lineageInitialized = true;
+  }
+
+  socket.on('lineage_update', (data) => {
+    console.log('[Lineage] Received update:', data.nodes.length, 'nodes,', data.edges.length, 'edges');
+    updateLineageGraph(data);
+  });
+
+  console.log('[Lineage] WebSocket listener registered');
+
 </script>
 </body>
 </html>

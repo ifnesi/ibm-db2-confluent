@@ -1,6 +1,6 @@
 """
 IoT device data generator — creates 10 devices at startup,
-then makes small incremental changes to sensor values every second.
+then makes small incremental changes to all sensor values every 0.5 seconds.
 """
 import os
 import time
@@ -43,7 +43,6 @@ def wait_and_connect():
         except Exception:
             attempt += 1
             elapsed = int(time.time() - start)
-            # Print a progress dot every attempt; a full status line every 12 attempts (~60s)
             if attempt % 12 == 0:
                 print(f"  still waiting... ({elapsed}s elapsed)", flush=True)
             else:
@@ -55,10 +54,8 @@ def run():
     conn = wait_and_connect()
     curs = conn.cursor()
 
-    print("Data generation started (1 operation/second, 10 IoT devices).", flush=True)
+    print("Data generation started (2 operations/second, 10 IoT devices).", flush=True)
 
-    # Wait for IOT_DEVICES table to exist (init-db.sh runs after DB2 accepts connections)
-    # then insert 10 devices. Retry indefinitely until both table exists and inserts succeed.
     while True:
         try:
             print("Waiting for IOT_DEVICES table and inserting 10 devices...", flush=True)
@@ -93,7 +90,6 @@ def run():
             except Exception:
                 pass
             time.sleep(5)
-            # Reconnect if the connection broke
             try:
                 curs.execute("VALUES 1")
             except Exception:
@@ -104,37 +100,32 @@ def run():
                 conn = wait_and_connect()
                 curs = conn.cursor()
 
-    # Update loop: every second, update one random field of one random device
+    # Update loop: every 0.5s, pick a random device and update ALL three sensor fields at once
     while True:
         try:
             device_id = random.choice(list(device_state.keys()))
-            field = random.choice(["temperature", "humidity", "pressure"])
+            state = device_state[device_id]
 
-            # Apply small incremental change
-            current = device_state[device_id][field]
-            if field == "temperature":
-                change = round(random.uniform(-0.5, 0.5), 2)
-                new_val = max(10, min(30, current + change))
-            elif field == "humidity":
-                change = round(random.uniform(-1, 1), 2)
-                new_val = max(20, min(80, current + change))
-            else:  # pressure
-                change = round(random.uniform(-0.5, 0.5), 2)
-                new_val = max(990, min(1030, current + change))
+            temp_change = round(random.uniform(-0.5, 0.5), 2)
+            hum_change = round(random.uniform(-1, 1), 2)
+            pres_change = round(random.uniform(-0.5, 0.5), 2)
 
-            device_state[device_id][field] = new_val
+            new_temp = round(max(10, min(30, state["temperature"] + temp_change)), 2)
+            new_hum = round(max(20, min(80, state["humidity"] + hum_change)), 2)
+            new_pres = round(max(990, min(1030, state["pressure"] + pres_change)), 2)
 
-            # Update database
-            if field == "temperature":
-                sql = "UPDATE DB2INST1.IOT_DEVICES SET temperature=?, updatedAt=CURRENT TIMESTAMP WHERE deviceID=?"
-            elif field == "humidity":
-                sql = "UPDATE DB2INST1.IOT_DEVICES SET humidity=?, updatedAt=CURRENT TIMESTAMP WHERE deviceID=?"
-            else:
-                sql = "UPDATE DB2INST1.IOT_DEVICES SET pressure=?, updatedAt=CURRENT TIMESTAMP WHERE deviceID=?"
+            device_state[device_id]["temperature"] = new_temp
+            device_state[device_id]["humidity"] = new_hum
+            device_state[device_id]["pressure"] = new_pres
 
-            curs.execute(sql, [new_val, device_id])
+            curs.execute(
+                "UPDATE DB2INST1.IOT_DEVICES "
+                "SET temperature=?, humidity=?, pressure=?, updatedAt=CURRENT TIMESTAMP "
+                "WHERE deviceID=?",
+                [new_temp, new_hum, new_pres, device_id],
+            )
             conn.commit()
-            print(f"[UPDATE] {device_id} {field}={new_val}", flush=True)
+            print(f"[UPDATE] {device_id} temp={new_temp} hum={new_hum} pres={new_pres}", flush=True)
 
         except Exception as exc:
             print(f"Error: {exc} — reconnecting...", flush=True)
@@ -145,7 +136,7 @@ def run():
             conn = wait_and_connect()
             curs = conn.cursor()
 
-        time.sleep(1)
+        time.sleep(0.5)
 
 
 if __name__ == "__main__":

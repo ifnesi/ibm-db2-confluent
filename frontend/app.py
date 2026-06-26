@@ -1,6 +1,7 @@
 """
 Live IoT dashboard — consumes from Kafka (raw devices + averages) and pushes updates via WebSocket.
 """
+
 import io
 import os
 import json
@@ -15,38 +16,46 @@ from decimal import Decimal
 from collections import deque
 
 from confluent_kafka import Consumer, KafkaError
-from flask import Flask, render_template
+from flask import Flask, render_template, jsonify
 from flask_socketio import SocketIO, emit
 
+from lineage import get_lineage
+
+
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode="threading",
+)
 
 KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "broker:29092")
-SCHEMA_REGISTRY_URL = os.environ.get("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")
+SCHEMA_REGISTRY_URL = os.environ.get(
+    "SCHEMA_REGISTRY_URL", "http://schema-registry:8081"
+)
 KAFKA_TOPIC_DEVICES = os.environ.get("KAFKA_TOPIC_DEVICES", "DB2INST1.IOT_DEVICES")
 KAFKA_TOPIC_AVG = os.environ.get("KAFKA_TOPIC_AVG", "IOT_DEVICES_AVG")
 
 # In-memory storage: device id (str) -> serializable dict
-devices: dict[str, dict] = {}
+devices: dict[str, dict] = dict()
 devices_lock = threading.Lock()
 
 # In-memory storage for averages (keep last 15 mins): device_id -> deque of {timestamp, temps, humidity, pressure}
-averages_history: dict[str, deque] = {}
+averages_history: dict[str, deque] = dict()
 averages_lock = threading.Lock()
 MAX_HISTORY_POINTS = 15 * 60  # 15 minutes of 1-second updates (we'll store key points)
 
-schema_cache: dict[int, dict] = {}
+schema_cache: dict[int, dict] = dict()
 
 
 # ---------------------------------------------------------------------------
 # Avro helpers
 # ---------------------------------------------------------------------------
 
+
 def fetch_schema(schema_id: int) -> dict:
     if schema_id not in schema_cache:
-        resp = requests.get(
-            f"{SCHEMA_REGISTRY_URL}/schemas/ids/{schema_id}", timeout=5
-        )
+        resp = requests.get(f"{SCHEMA_REGISTRY_URL}/schemas/ids/{schema_id}", timeout=5)
         resp.raise_for_status()
         raw = json.loads(resp.json()["schema"])
         schema_cache[schema_id] = fastavro.parse_schema(raw)
@@ -82,6 +91,7 @@ def to_json_safe(record: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Kafka consumer (background thread)
 # ---------------------------------------------------------------------------
+
 
 def kafka_consumer_thread():
     print("Kafka consumer starting — waiting 15 s for broker …", flush=True)
@@ -147,13 +157,43 @@ def kafka_consumer_thread():
 # Routes & Socket.IO events
 # ---------------------------------------------------------------------------
 
+
 @app.route("/")
 def index():
     with devices_lock:
         devices_snapshot = list(devices.values())
     with averages_lock:
         averages_snapshot = {k: list(v) for k, v in averages_history.items()}
-    return render_template("index.html", devices=devices_snapshot, averages=averages_snapshot)
+    return render_template(
+        "index.html",
+        devices=devices_snapshot,
+        averages=averages_snapshot,
+    )
+
+
+@app.route("/api/lineage")
+def lineage_api():
+    """Return current data lineage graph."""
+    try:
+        lineage_data = get_lineage()
+        return jsonify(lineage_data)
+    except Exception as e:
+        print(f"Error in lineage API: {e}", flush=True)
+        return jsonify({"error": str(e)}), 500
+
+
+def lineage_broadcast_thread():
+    """Broadcast lineage updates every second."""
+    print("Lineage broadcast thread starting...", flush=True)
+    time.sleep(15)  # Wait for broker like Kafka consumer
+    while True:
+        try:
+            lineage_data = get_lineage()
+            socketio.emit("lineage_update", lineage_data)
+            time.sleep(1)
+        except Exception as e:
+            print(f"Error in lineage broadcast: {e}", flush=True)
+            time.sleep(1)
 
 
 @socketio.on("connect")
@@ -171,6 +211,21 @@ def handle_connect():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    t = threading.Thread(target=kafka_consumer_thread, daemon=True)
+    t = threading.Thread(
+        target=kafka_consumer_thread,
+        daemon=True,
+    )
     t.start()
-    socketio.run(app, host="0.0.0.0", port=5001, allow_unsafe_werkzeug=True)
+
+    t2 = threading.Thread(
+        target=lineage_broadcast_thread,
+        daemon=True,
+    )
+    t2.start()
+
+    socketio.run(
+        app,
+        host="0.0.0.0",
+        port=5001,
+        allow_unsafe_werkzeug=True,
+    )

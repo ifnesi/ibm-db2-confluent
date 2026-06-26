@@ -1,5 +1,5 @@
 {
-  "name": "redis-sink",
+  "name": "redis-iot-devices-sink",
   "config": {
     "connector.class": "com.redis.kafka.connect.RedisSinkConnector",
     "tasks.max": "1",
