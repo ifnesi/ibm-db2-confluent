@@ -30,9 +30,9 @@ DEVICES = [
 # Per-device sensor state for realistic incremental drift
 sensor_state = {
     d["device_identifier"]: {
-        "temp": round(random.uniform(15, 25), 2),
-        "hmdt": round(random.uniform(40, 60), 2),
-        "press": round(random.uniform(1000, 1020), 2),
+        "temp": round(random.uniform(5, 35), 2),
+        "hmdt": round(random.uniform(30, 75), 2),
+        "press": round(random.uniform(1000, 1025), 2),
     }
     for d in DEVICES
 }

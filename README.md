@@ -37,9 +37,9 @@ The first run pulls all images and builds the custom containers - allow **5~10 m
 | `device_identifier` | VARCHAR(50) | Stable per device, e.g., `device-01` |
 | `vendor_name` | VARCHAR(100) | Stable per device |
 | `serial_number` | VARCHAR(100) | Stable per device |
-| `temp` | DOUBLE | Sensor reading in °C (~15–25), varies per insert |
-| `hmdt` | DOUBLE | Sensor reading in % (~40–60), varies per insert |
-| `press` | DOUBLE | Sensor reading in hPa (~1000–1020), varies per insert |
+| `temp` | DOUBLE | Sensor reading in °C (~5–35), varies per insert |
+| `hmdt` | DOUBLE | Sensor reading in % (~30–75), varies per insert |
+| `press` | DOUBLE | Sensor reading in hPa (~1000–1025), varies per insert |
 | `created_timestamp` | TIMESTAMP | Insert time (no updates — table is append-only) |
 
 > **Canonical format normalization:** The Db2 source connector applies a `ReplaceField` SMT that renames these Db2-specific column names to a canonical format (`deviceID`, `vendor`, `serialNumber`, `temperature`, `humidity`, `pressure`, `updatedAt`) before publishing to Kafka. This decouples the Db2 schema from the rest of the pipeline — any future Db2 column renames only require updating the SMT mapping, with zero changes downstream (Flink, sinks, frontend).
