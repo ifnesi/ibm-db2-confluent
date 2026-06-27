@@ -10,4 +10,8 @@ fi
 
 echo "Stopping demo stack and removing volumes..."
 docker compose down -v --remove-orphans
-echo "Done. Restart with: ./start.sh"
+
+echo "Removing dangling (<none>) images..."
+docker images -f "dangling=true" -q | xargs docker rmi 2>/dev/null || true
+
+echo "Done!"
