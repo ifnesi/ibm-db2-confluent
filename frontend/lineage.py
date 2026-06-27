@@ -12,7 +12,7 @@ KAFKA_CONNECT_URL = os.environ.get("KAFKA_CONNECT_URL", "http://connect:8083")
 FLINK_URL = os.environ.get("FLINK_URL", "http://flink-jobmanager:9081")
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090")
 
-TARGET_TOPICS = {"DB2INST1.IOT_DEVICES", "IOT_DEVICES_AVG"}
+TARGET_TOPICS = {"iot_devices_db2", "iot_devices_avg"}
 
 
 def fmt_bytes(bps: float) -> str:
@@ -196,13 +196,13 @@ class LineageService:
 
         # --- WEBAPP CONSUMER (static node — always present) ---
         webapp_group = "frontend-consumer-group"
-        webapp_lag_devices = self.get_lag(webapp_group, "DB2INST1.IOT_DEVICES")
-        webapp_lag_avg = self.get_lag(webapp_group, "IOT_DEVICES_AVG")
+        webapp_lag_devices = self.get_lag(webapp_group, "iot_devices_db2")
+        webapp_lag_avg = self.get_lag(webapp_group, "iot_devices_avg")
         nodes.append({"data": {
             "id": "webapp-consumer", "label": "WebApp\nDashboard", "type": "sink",
             "detail": {
                 "group_id": webapp_group,
-                "topics": ["DB2INST1.IOT_DEVICES", "IOT_DEVICES_AVG"],
+                "topics": ["iot_devices_db2", "iot_devices_avg"],
                 "lag_devices": webapp_lag_devices,
                 "lag_avg": webapp_lag_avg,
             }
@@ -210,30 +210,30 @@ class LineageService:
         node_ids["webapp"] = "webapp-consumer"
 
         # --- EDGES ---
-        dev_tp = throughputs.get("DB2INST1.IOT_DEVICES", 0)
-        avg_tp = throughputs.get("IOT_DEVICES_AVG", 0)
+        dev_tp = throughputs.get("iot_devices_db2", 0)
+        avg_tp = throughputs.get("iot_devices_avg", 0)
 
         # Source → IOT_DEVICES
-        if "db2-source" in node_ids and "DB2INST1.IOT_DEVICES" in node_ids:
+        if "db2-source" in node_ids and "iot_devices_db2" in node_ids:
             edges.append({"data": {
                 "id": "edge-source-devices",
-                "source": "db2-source", "target": node_ids["DB2INST1.IOT_DEVICES"],
+                "source": "db2-source", "target": node_ids["iot_devices_db2"],
                 "label": fmt_bytes(dev_tp), "throughput": dev_tp,
             }})
 
         # IOT_DEVICES → Flink (no lag: Flink uses its own state backend, not __consumer_offsets)
-        if "flink" in node_ids and "DB2INST1.IOT_DEVICES" in node_ids:
+        if "flink" in node_ids and "iot_devices_db2" in node_ids:
             edges.append({"data": {
                 "id": "edge-devices-flink",
-                "source": node_ids["DB2INST1.IOT_DEVICES"], "target": "flink-job",
+                "source": node_ids["iot_devices_db2"], "target": "flink-job",
                 "label": fmt_bytes(dev_tp), "throughput": dev_tp,
             }})
 
-        # Flink → IOT_DEVICES_AVG
-        if "flink" in node_ids and "IOT_DEVICES_AVG" in node_ids:
+        # Flink → iot_devices_avg
+        if "flink" in node_ids and "iot_devices_avg" in node_ids:
             edges.append({"data": {
                 "id": "edge-flink-avg",
-                "source": "flink-job", "target": node_ids["IOT_DEVICES_AVG"],
+                "source": "flink-job", "target": node_ids["iot_devices_avg"],
                 "label": fmt_bytes(avg_tp), "throughput": avg_tp,
             }})
 
@@ -253,8 +253,8 @@ class LineageService:
                     "throughput": tp, "lag": lag,
                 }})
 
-        # WebApp reads IOT_DEVICES and IOT_DEVICES_AVG
-        for topic, lag in [("DB2INST1.IOT_DEVICES", webapp_lag_devices), ("IOT_DEVICES_AVG", webapp_lag_avg)]:
+        # WebApp reads IOT_DEVICES and iot_devices_avg
+        for topic, lag in [("iot_devices_db2", webapp_lag_devices), ("iot_devices_avg", webapp_lag_avg)]:
             if topic in node_ids:
                 tp = throughputs.get(topic, 0)
                 lag_str = f" | Lag: {lag}" if lag else ""

@@ -296,14 +296,14 @@
         <tbody id="devices-body">
           {% if devices %}
             {% for dev in devices %}
-            <tr id="row-{{ dev.DEVICEID }}">
-              <td class="id-col">{{ dev.DEVICEID }}</td>
-              <td class="name-col">{{ dev.VENDOR }}</td>
-              <td class="dept-col">{{ dev.SERIALNUMBER }}</td>
-              <td class="salary-col">{{ "%.2f"|format(dev.TEMPERATURE|float) }}°C</td>
-              <td class="salary-col">{{ "%.2f"|format(dev.HUMIDITY|float) }}%</td>
-              <td class="salary-col">{{ "%.2f"|format(dev.PRESSURE|float) }} hPa</td>
-              <td class="ts-col">{{ dev.UPDATEDAT }}</td>
+            <tr id="row-{{ dev.deviceID }}">
+              <td class="id-col">{{ dev.deviceID }}</td>
+              <td class="name-col">{{ dev.vendor }}</td>
+              <td class="dept-col">{{ dev.serialNumber }}</td>
+              <td class="salary-col">{{ "%.2f"|format(dev.temperature|float) }}°C</td>
+              <td class="salary-col">{{ "%.2f"|format(dev.humidity|float) }}%</td>
+              <td class="salary-col">{{ "%.2f"|format(dev.pressure|float) }} hPa</td>
+              <td class="ts-col">{{ dev.updatedAt }}</td>
             </tr>
             {% endfor %}
           {% else %}
@@ -376,7 +376,7 @@
 
   {% if devices %}
   {% for dev in devices %}
-  deviceRows['{{ dev.DEVICEID }}'] = document.getElementById('row-{{ dev.DEVICEID }}');
+  deviceRows['{{ dev.deviceID }}'] = document.getElementById('row-{{ dev.deviceID }}');
   {% endfor %}
   {% endif %}
 
@@ -412,7 +412,7 @@
   }
 
   function upsertDeviceRow(dev, isNew) {
-    const id = String(dev.DEVICEID);
+    const id = String(dev.deviceID);
     let tr = deviceRows[id];
 
     const empty = document.getElementById('empty-row');
@@ -426,13 +426,13 @@
     }
 
     tr.innerHTML = `
-      <td class="id-col">${fmt(dev.DEVICEID)}</td>
-      <td class="name-col">${fmt(dev.VENDOR)}</td>
-      <td class="dept-col">${fmt(dev.SERIALNUMBER)}</td>
-      <td class="salary-col">${parseFloat(dev.TEMPERATURE).toFixed(2)}°C</td>
-      <td class="salary-col">${parseFloat(dev.HUMIDITY).toFixed(2)}%</td>
-      <td class="salary-col">${parseFloat(dev.PRESSURE).toFixed(2)} hPa</td>
-      <td class="ts-col">${fmtTs(dev.UPDATEDAT)}</td>
+      <td class="id-col">${fmt(dev.deviceID)}</td>
+      <td class="name-col">${fmt(dev.vendor)}</td>
+      <td class="dept-col">${fmt(dev.serialNumber)}</td>
+      <td class="salary-col">${parseFloat(dev.temperature).toFixed(2)}°C</td>
+      <td class="salary-col">${parseFloat(dev.humidity).toFixed(2)}%</td>
+      <td class="salary-col">${parseFloat(dev.pressure).toFixed(2)} hPa</td>
+      <td class="ts-col">${fmtTs(dev.updatedAt)}</td>
     `;
 
     tr.classList.remove('flash-new', 'flash-update');
@@ -468,7 +468,7 @@
   }
 
   function updateAverageChart(avg) {
-    const deviceId = String(avg.DEVICEID);
+    const deviceId = String(avg.deviceID);
     const ts = new Date(avg.window_end).toLocaleTimeString();
 
     initMetricCharts();
@@ -502,7 +502,8 @@
           backgroundColor: 'transparent',
           tension: 0.3,
           pointRadius: 2,
-          fill: false
+          fill: false,
+          spanGaps: true
         });
         metricCharts[metric].data.datasets.sort((a, b) => a.label.localeCompare(b.label));
       });
@@ -527,14 +528,14 @@
   });
 
   socket.on('initial_devices', (devices) => {
-    devices.forEach(dev => upsertDeviceRow(dev, !(String(dev.DEVICEID) in deviceRows)));
+    devices.forEach(dev => upsertDeviceRow(dev, !(String(dev.deviceID) in deviceRows)));
   });
 
   socket.on('initial_averages', (history) => {
     Object.entries(history).forEach(([deviceId, points]) => {
       points.forEach(p => {
         updateAverageChart({
-          DEVICEID: deviceId,
+          deviceID: deviceId,
           window_end: p.timestamp,
           avg_temperature: p.avg_temperature,
           avg_humidity: p.avg_humidity,

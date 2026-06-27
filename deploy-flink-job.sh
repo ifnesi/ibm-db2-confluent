@@ -22,39 +22,40 @@ done
 cat > /tmp/iot_flink.sql << 'EOF'
 DROP TABLE IF EXISTS `iot_devices_source`;
 CREATE TABLE `iot_devices_source` (
-    `DEVICEID`     STRING,
-    `VENDOR`       STRING,
-    `SERIALNUMBER` STRING,
-    `TEMPERATURE`  DOUBLE,
-    `HUMIDITY`     DOUBLE,
-    `PRESSURE`     DOUBLE,
-    `CREATEDAT`    TIMESTAMP(3),
-    `UPDATEDAT`    TIMESTAMP(3),
-    WATERMARK FOR `UPDATEDAT` AS `UPDATEDAT`
+    `deviceID`     STRING,
+    `vendor`       STRING,
+    `serialNumber` STRING,
+    `temperature`  DOUBLE,
+    `humidity`     DOUBLE,
+    `pressure`     DOUBLE,
+    `updatedAt`    TIMESTAMP(3),
+    WATERMARK FOR `updatedAt` AS `updatedAt` - INTERVAL '10' SECOND
 ) WITH (
     'connector'                    = 'kafka',
-    'topic'                        = 'DB2INST1.IOT_DEVICES',
+    'topic'                        = 'iot_devices_db2',
     'properties.bootstrap.servers' = 'broker:29092',
     'properties.group.id'          = 'flink-iot-averages',
     'scan.startup.mode'            = 'earliest-offset',
     'key.format'                   = 'raw',
-    'key.fields'                   = 'DEVICEID',
+    'key.fields'                   = 'deviceID',
     'value.format'                 = 'avro-confluent',
     'value.avro-confluent.url'     = 'http://schema-registry:8081'
 );
 
 DROP TABLE IF EXISTS `iot_devices_avg`;
 CREATE TABLE `iot_devices_avg` (
-    `DEVICEID`       STRING,
-    `window_start`   TIMESTAMP(3),
-    `window_end`     TIMESTAMP(3),
+    `deviceID`        STRING,
+    `vendor`          STRING,
+    `serialNumber`    STRING,
+    `window_start`    TIMESTAMP(3),
+    `window_end`      TIMESTAMP(3),
     `avg_temperature` DOUBLE,
-    `avg_humidity`   DOUBLE,
-    `avg_pressure`   DOUBLE,
-    PRIMARY KEY (`DEVICEID`) NOT ENFORCED
+    `avg_humidity`    DOUBLE,
+    `avg_pressure`    DOUBLE,
+    PRIMARY KEY (`deviceID`) NOT ENFORCED
 ) WITH (
     'connector'                    = 'upsert-kafka',
-    'topic'                        = 'IOT_DEVICES_AVG',
+    'topic'                        = 'iot_devices_avg',
     'properties.bootstrap.servers' = 'broker:29092',
     'key.format'                   = 'raw',
     'value.format'                 = 'avro-confluent',
@@ -64,14 +65,18 @@ CREATE TABLE `iot_devices_avg` (
 
 INSERT INTO `iot_devices_avg`
 SELECT
-    `DEVICEID`,
-    TUMBLE_START(`UPDATEDAT`, INTERVAL '15' SECOND) AS `window_start`,
-    TUMBLE_END(`UPDATEDAT`, INTERVAL '15' SECOND)   AS `window_end`,
-    ROUND(AVG(`TEMPERATURE`), 2) AS `avg_temperature`,
-    ROUND(AVG(`HUMIDITY`), 2)    AS `avg_humidity`,
-    ROUND(AVG(`PRESSURE`), 2)    AS `avg_pressure`
-FROM `iot_devices_source`
-GROUP BY `DEVICEID`, TUMBLE(`UPDATEDAT`, INTERVAL '15' SECOND);
+    `deviceID`,
+    MAX(`vendor`)             AS `vendor`,
+    MAX(`serialNumber`)       AS `serialNumber`,
+    `window_start`,
+    `window_end`,
+    ROUND(AVG(`temperature`), 2) AS `avg_temperature`,
+    ROUND(AVG(`humidity`), 2)    AS `avg_humidity`,
+    ROUND(AVG(`pressure`), 2)    AS `avg_pressure`
+FROM TABLE(
+    TUMBLE(TABLE `iot_devices_source`, DESCRIPTOR(`updatedAt`), INTERVAL '15' SECOND)
+)
+GROUP BY `deviceID`, `window_start`, `window_end`;
 EOF
 
 # Copy SQL into the sql-client container and execute

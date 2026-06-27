@@ -3,7 +3,7 @@
   "config": {
     "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
     "tasks.max": "1",
-    "topics": "DB2INST1.IOT_DEVICES,IOT_DEVICES_AVG",
+    "topics": "iot_devices_db2,iot_devices_avg",
     "connection.url": "jdbc:postgresql://postgres:5432/postgres",
     "connection.user": "postgres",
     "connection.password": "postgres",
@@ -16,14 +16,11 @@
     "key.converter": "org.apache.kafka.connect.storage.StringConverter",
     "value.converter": "io.confluent.connect.avro.AvroConverter",
     "value.converter.schema.registry.url": "http://schema-registry:8081",
-    "transforms": "routeDevices,routeAvg,renameFields",
+    "transforms": "routeDevices,renameFields",
     "transforms.routeDevices.type": "org.apache.kafka.connect.transforms.RegexRouter",
-    "transforms.routeDevices.regex": "DB2INST1\\.IOT_DEVICES",
+    "transforms.routeDevices.regex": "iot_devices_db2",
     "transforms.routeDevices.replacement": "iot_devices",
-    "transforms.routeAvg.type": "org.apache.kafka.connect.transforms.RegexRouter",
-    "transforms.routeAvg.regex": "IOT_DEVICES_AVG",
-    "transforms.routeAvg.replacement": "iot_devices_avg",
     "transforms.renameFields.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
-    "transforms.renameFields.renames": "DEVICEID:device_id,VENDOR:vendor,SERIALNUMBER:serial_number,TEMPERATURE:temperature,HUMIDITY:humidity,PRESSURE:pressure,CREATEDAT:created_at,UPDATEDAT:updated_at"
+    "transforms.renameFields.renames": "deviceID:device_id,vendor:vendor,serialNumber:serial_number,temperature:temperature,humidity:humidity,pressure:pressure,updatedAt:updated_at"
   }
 }

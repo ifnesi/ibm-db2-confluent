@@ -6,7 +6,7 @@ This demo shows how to build a **live data pipeline** from IBM Db2 (IoT source) 
 
 ![Architecture Diagram](./imgs/demo-diagram.png)
 
-A **data generator** container creates 10 IoT devices at startup, then continuously updates all three sensor values (temperature, humidity, pressure) for a randomly selected device every 0.5 seconds. Raw data flows through Confluent to all three sinks simultaneously. In parallel, **Flink** calculates 15-second tumbling window averages per device/metric and writes results to a separate topic, which is also consumed by all three sinks. The **frontend** has three tabs: live device data table, line charts of the last 15 minutes of averages, and a real-time **data lineage graph** showing the full pipeline topology with throughput metrics.
+A **data generator** container continuously inserts new sensor readings for 10 IoT devices (append-only, no updates) at 2 rows/second. Device metadata (identifier, vendor, serial number) is stable per device; only sensor values vary per insert. Raw data flows through Confluent to all three sinks simultaneously. In parallel, **Flink** calculates 15-second tumbling window averages per device/metric using the Window TVF API (with a 10-second late-event watermark) and writes results to a separate topic, which is also consumed by all three sinks. The **frontend** has three tabs: live device data table, line charts of the last 15 minutes of averages, and a real-time **data lineage graph** showing the full pipeline topology with throughput metrics.
 
 ## Prerequisites
 
@@ -34,14 +34,17 @@ The first run pulls all images and builds the custom containers - allow **5~10 m
 
 | Column | Type | Notes |
 |--------|------|-------|
-| `deviceID` | VARCHAR(50) | Unique identifier, e.g., `device-01` |
-| `vendor` | VARCHAR(100) | Manufacturer name |
-| `serialNumber` | VARCHAR(100) | Device serial number |
-| `temperature` | DOUBLE | Current reading in °C (~15–25) |
-| `humidity` | DOUBLE | Current reading in % (~40–60) |
-| `pressure` | DOUBLE | Current reading in hPa (~1000–1020) |
-| `createdAt` | TIMESTAMP | When record was inserted |
-| `updatedAt` | TIMESTAMP | When record was last updated |
+| `device_identifier` | VARCHAR(50) | Stable per device, e.g., `device-01` |
+| `vendor_name` | VARCHAR(100) | Stable per device |
+| `serial_number` | VARCHAR(100) | Stable per device |
+| `temp` | DOUBLE | Sensor reading in °C (~15–25), varies per insert |
+| `hmdt` | DOUBLE | Sensor reading in % (~40–60), varies per insert |
+| `press` | DOUBLE | Sensor reading in hPa (~1000–1020), varies per insert |
+| `created_timestamp` | TIMESTAMP | Insert time (no updates — table is append-only) |
+
+> **Canonical format normalization:** The Db2 source connector applies a `ReplaceField` SMT that renames these Db2-specific column names to a canonical format (`deviceID`, `vendor`, `serialNumber`, `temperature`, `humidity`, `pressure`, `updatedAt`) before publishing to Kafka. This decouples the Db2 schema from the rest of the pipeline — any future Db2 column renames only require updating the SMT mapping, with zero changes downstream (Flink, sinks, frontend).
+>
+> The table is **insert-only** (commit log pattern) — DB2 never updates rows. Upsert semantics are applied at the sink level (PostgreSQL and Redis always reflect the latest reading per device).
 
 ```
 Database: testdb
@@ -61,7 +64,7 @@ db2 "SELECT * FROM DB2INST1.IOT_DEVICES"
 db2 "SELECT COUNT(*) FROM DB2INST1.IOT_DEVICES"
 ```
 
-Watch rows being updated live (refreshes every second):
+Watch rows being inserted live (refreshes every second):
 ```bash
 ./watch-db2.sh
 ```
@@ -80,13 +83,13 @@ This step waits for DB2 and the `IOT_DEVICES` table to exist, then deploys all t
 
 ### 3. Deploy the Flink averaging job
 
-Once the source connector is running and populating the `DB2INST1.IOT_DEVICES` topic:
+Once the source connector is running and populating the `iot_devices_db2` topic:
 
 ```bash
 ./deploy-flink-job.sh
 ```
 
-This submits the Flink INSERT job, which starts calculating 1-minute tumbling window averages. Results are written to `IOT_DEVICES_AVG` and propagate to all sinks automatically.
+This submits the Flink INSERT job, which starts calculating 15-second tumbling window averages. Results are written to `iot_devices_avg` and propagate to all sinks automatically.
 
 ### 4. Watch the data flow
 
@@ -114,18 +117,18 @@ This submits the Flink INSERT job, which starts calculating 1-minute tumbling wi
 
 Two topics are created automatically by the pipeline:
 
-1. **`DB2INST1.IOT_DEVICES`** — Raw device data from Db2 source connector (~2 updates/sec, polled every 500 ms)
-2. **`IOT_DEVICES_AVG`** — 15-second tumbling window averages from Flink (~1 update/15 sec per device)
+1. **`iot_devices_db2`** — Raw device data from Db2 source connector (~2 inserts/sec, polled every 500 ms)
+2. **`iot_devices_avg`** — 15-second tumbling window averages from Flink (~1 update/15 sec per device)
 
 ![Topics in Control Center](./imgs/kafka-topics-created.png)
 
-**`DB2INST1.IOT_DEVICES` — raw device messages:**
+**`iot_devices_db2` — raw device messages:**
 
-![DB2INST1.IOT_DEVICES topic messages](./imgs/kafka-topic-db2inst1.iot_devices-data.png)
+![iot_devices_db2 topic messages](./imgs/kafka-topic-db2inst1.iot_devices-data.png)
 
-**`IOT_DEVICES_AVG` — Flink window average messages:**
+**`iot_devices_avg` — Flink window average messages:**
 
-![IOT_DEVICES_AVG topic messages](./imgs/kafka-topic-iot_devices_avg-data.png)
+![iot_devices_avg topic messages](./imgs/kafka-topic-iot_devices_avg-data.png)
 
 ```bash
 # List topics
@@ -134,13 +137,13 @@ docker exec broker kafka-topics --bootstrap-server localhost:9092 --list
 # Consume raw device records
 docker exec schema-registry kafka-avro-console-consumer \
   --bootstrap-server broker:29092 \
-  --topic DB2INST1.IOT_DEVICES \
+  --topic iot_devices_db2 \
   --from-beginning
 
 # Consume average records
 docker exec schema-registry kafka-avro-console-consumer \
   --bootstrap-server broker:29092 \
-  --topic IOT_DEVICES_AVG \
+  --topic iot_devices_avg \
   --from-beginning
 
 # Check consumer group lag
@@ -159,8 +162,8 @@ docker exec broker kafka-consumer-groups \
 
 Two tables are created automatically by the sink connector:
 
-- **`iot_devices`** — raw device data (from `DB2INST1.IOT_DEVICES` topic)
-- **`iot_devices_avg`** — 1-minute window averages (from `IOT_DEVICES_AVG` topic)
+- **`iot_devices`** — raw device data (from `iot_devices_db2` topic)
+- **`iot_devices_avg`** — 15-second window averages (from `iot_devices_avg` topic)
 
 ![pgAdmin data view](./imgs/pgadmin-postgres-data-view.png)
 
@@ -171,8 +174,8 @@ Password: postgres
 ```
 
 ```bash
-docker exec -it postgres psql -U postgres -d postgres -c 'SELECT * FROM iot_devices LIMIT 5;'
-docker exec -it postgres psql -U postgres -d postgres -c 'SELECT * FROM iot_devices_avg ORDER BY window_end DESC LIMIT 5;'
+docker exec -it postgres psql -U postgres -d postgres -c 'SELECT * FROM iot_devices LIMIT 10;'
+docker exec -it postgres psql -U postgres -d postgres -c 'SELECT * FROM iot_devices_avg ORDER BY window_end DESC LIMIT 10;'
 ```
 
 pgAdmin is pre-configured with a **Demo - PostgreSQL** server. Open http://localhost:5050 and expand the server tree — no manual setup required.
@@ -208,7 +211,7 @@ The frontend automatically consumes from both Kafka topics and displays live dat
 
 ![Frontend average charts](./imgs/frontend-charts.png)
 
-**Data Lineage** — live pipeline topology graph showing nodes (DB2 Source → Kafka Topics → Flink → Sinks) with real-time bytes/sec throughput (30-second rolling average) and consumer lag per edge:
+**Data Lineage** — live pipeline topology graph showing nodes (DB2 Source → Kafka Topics → Flink → Sinks) with real-time bytes/sec throughput and consumer lag per edge:
 
 ![Frontend data lineage](./imgs/frontend-data-lineage.png)
 
@@ -244,7 +247,7 @@ docker logs flink-jobmanager
 
 The Flink table definitions (`iot_devices_source` and `iot_devices_avg`) and the INSERT job are both submitted by `deploy-flink-job.sh`. The script uses the `flink-sql-client` container to run the SQL non-interactively.
 
-The job uses a **15-second tumbling window** on the `UPDATEDAT` watermark, producing averages for each device every 15 seconds. Results are written to `IOT_DEVICES_AVG` via upsert-kafka with Avro encoding.
+The job uses a **15-second tumbling window** (Window TVF API) on the `updatedAt` watermark with a **10-second late-event tolerance**, producing averages per device every 15 seconds. Results are written to `iot_devices_avg` via upsert-kafka with Avro encoding.
 
 > **Note:** Flink tracks its read position using its own state backend, not Kafka's `__consumer_offsets`. Consumer group lag shown in the Data Lineage tab is therefore omitted for the IOT_DEVICES→Flink edge — it is not meaningful for Flink sources.
 

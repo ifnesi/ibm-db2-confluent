@@ -33,8 +33,8 @@ KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "broker:29092")
 SCHEMA_REGISTRY_URL = os.environ.get(
     "SCHEMA_REGISTRY_URL", "http://schema-registry:8081"
 )
-KAFKA_TOPIC_DEVICES = os.environ.get("KAFKA_TOPIC_DEVICES", "DB2INST1.IOT_DEVICES")
-KAFKA_TOPIC_AVG = os.environ.get("KAFKA_TOPIC_AVG", "IOT_DEVICES_AVG")
+KAFKA_TOPIC_DEVICES = os.environ.get("KAFKA_TOPIC_DEVICES", "iot_devices_db2")
+KAFKA_TOPIC_AVG = os.environ.get("KAFKA_TOPIC_AVG", "iot_devices_avg")
 
 # Counter for total events received by Kafka consumer thread
 events_received_count: int = 0
@@ -134,7 +134,7 @@ def kafka_consumer_thread():
 
             if topic == KAFKA_TOPIC_DEVICES:
                 # Raw device data — DB2 column names are uppercase in Avro schema
-                device_id = str(safe.get("DEVICEID", ""))
+                device_id = str(safe.get("deviceID", ""))
                 with devices_lock:
                     is_new = device_id not in devices
                     devices[device_id] = safe
@@ -142,7 +142,7 @@ def kafka_consumer_thread():
                 socketio.emit("device_update", safe)
             elif topic == KAFKA_TOPIC_AVG:
                 # Average data — field names are lowercase (defined by Flink sink table)
-                device_id = str(safe.get("DEVICEID", ""))
+                device_id = str(safe.get("deviceID", ""))
                 with averages_lock:
                     if device_id not in averages_history:
                         averages_history[device_id] = deque(maxlen=MAX_HISTORY_POINTS)

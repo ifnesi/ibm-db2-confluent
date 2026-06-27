@@ -1,6 +1,7 @@
 """
-IoT device data generator — creates 10 devices at startup,
-then makes small incremental changes to all sensor values every 0.5 seconds.
+IoT device data generator — inserts a new sensor reading row every 0.5 seconds.
+Device metadata (identifier, vendor, serial) is stable per device; only sensor
+values vary. DB2 is append-only (no updates), acting as a commit log.
 """
 import os
 import time
@@ -15,22 +16,33 @@ JDBC_DRIVER = "com.ibm.db2.jcc.DB2Driver"
 JDBC_JAR = "/app/db2jcc4.jar"
 NUM_DEVICES = 10
 
-VENDORS = [
-    "SensorCorp", "IoTWorks", "DataFlow", "SmartTech", "DeviceNet",
-    "CloudSense", "TelemetryPro", "MeterMax", "GaugeHub", "StreamData"
+# Fixed metadata per device — stable across all inserts
+DEVICES = [
+    {"device_identifier": f"device-{i:02d}",
+     "vendor_name": vendor,
+     "serial_number": f"SN{100000 + i}"}
+    for i, vendor in enumerate([
+        "SensorCorp", "IoTWorks", "DataFlow", "SmartTech", "DeviceNet",
+        "CloudSense", "TelemetryPro", "MeterMax", "GaugeHub", "StreamData"
+    ], start=1)
 ]
 
-# Device state: device_id -> {temperature, humidity, pressure}
-device_state = {}
+# Per-device sensor state for realistic incremental drift
+sensor_state = {
+    d["device_identifier"]: {
+        "temp": round(random.uniform(15, 25), 2),
+        "hmdt": round(random.uniform(40, 60), 2),
+        "press": round(random.uniform(1000, 1020), 2),
+    }
+    for d in DEVICES
+}
 
 
 def try_connect():
-    """Return a live connection or raise."""
     return jaydebeapi.connect(JDBC_DRIVER, DB2_URL, [DB2_USER, DB2_PASSWORD], JDBC_JAR)
 
 
 def wait_and_connect():
-    """Block until DB2 accepts a JDBC connection, then return it."""
     start = time.time()
     attempt = 0
     print("Waiting for DB2 to be ready (first boot takes 3-5 min on Apple Silicon)...", flush=True)
@@ -54,78 +66,30 @@ def run():
     conn = wait_and_connect()
     curs = conn.cursor()
 
-    print("Data generation started (2 operations/second, 10 IoT devices).", flush=True)
+    print("Data generation started (2 inserts/second, 10 IoT devices).", flush=True)
 
     while True:
         try:
-            print("Waiting for IOT_DEVICES table and inserting 10 devices...", flush=True)
-            device_state.clear()
-            for i in range(1, NUM_DEVICES + 1):
-                device_id = f"device-{i:02d}"
-                vendor = random.choice(VENDORS)
-                serial = f"SN{random.randint(100000, 999999)}"
-                temperature = round(random.uniform(15, 25), 2)
-                humidity = round(random.uniform(40, 60), 2)
-                pressure = round(random.uniform(1000, 1020), 2)
+            device = random.choice(DEVICES)
+            did = device["device_identifier"]
+            state = sensor_state[did]
 
-                device_state[device_id] = {
-                    "temperature": temperature,
-                    "humidity": humidity,
-                    "pressure": pressure,
-                }
+            new_temp  = round(max(10, min(30, state["temp"]  + random.uniform(-0.5, 0.5))), 2)
+            new_hmdt  = round(max(20, min(80, state["hmdt"]  + random.uniform(-1, 1))), 2)
+            new_press = round(max(990, min(1030, state["press"] + random.uniform(-0.5, 0.5))), 2)
 
-                curs.execute(
-                    "INSERT INTO DB2INST1.IOT_DEVICES "
-                    "(deviceID, vendor, serialNumber, temperature, humidity, pressure, createdAt, updatedAt) "
-                    "VALUES (?, ?, ?, ?, ?, ?, CURRENT TIMESTAMP, CURRENT TIMESTAMP)",
-                    [device_id, vendor, serial, temperature, humidity, pressure],
-                )
-            conn.commit()
-            print(f"[INIT] Created {NUM_DEVICES} devices", flush=True)
-            break
-        except Exception as exc:
-            print(f"  table not ready yet ({exc}) — retrying in 5s...", flush=True)
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            time.sleep(5)
-            try:
-                curs.execute("VALUES 1")
-            except Exception:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-                conn = wait_and_connect()
-                curs = conn.cursor()
-
-    # Update loop: every 0.5s, pick a random device and update ALL three sensor fields at once
-    while True:
-        try:
-            device_id = random.choice(list(device_state.keys()))
-            state = device_state[device_id]
-
-            temp_change = round(random.uniform(-0.5, 0.5), 2)
-            hum_change = round(random.uniform(-1, 1), 2)
-            pres_change = round(random.uniform(-0.5, 0.5), 2)
-
-            new_temp = round(max(10, min(30, state["temperature"] + temp_change)), 2)
-            new_hum = round(max(20, min(80, state["humidity"] + hum_change)), 2)
-            new_pres = round(max(990, min(1030, state["pressure"] + pres_change)), 2)
-
-            device_state[device_id]["temperature"] = new_temp
-            device_state[device_id]["humidity"] = new_hum
-            device_state[device_id]["pressure"] = new_pres
+            sensor_state[did]["temp"]  = new_temp
+            sensor_state[did]["hmdt"]  = new_hmdt
+            sensor_state[did]["press"] = new_press
 
             curs.execute(
-                "UPDATE DB2INST1.IOT_DEVICES "
-                "SET temperature=?, humidity=?, pressure=?, updatedAt=CURRENT TIMESTAMP "
-                "WHERE deviceID=?",
-                [new_temp, new_hum, new_pres, device_id],
+                "INSERT INTO DB2INST1.IOT_DEVICES "
+                "(device_identifier, vendor_name, serial_number, temp, hmdt, press, created_timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?, CURRENT TIMESTAMP)",
+                [did, device["vendor_name"], device["serial_number"], new_temp, new_hmdt, new_press],
             )
             conn.commit()
-            print(f"[UPDATE] {device_id} temp={new_temp} hum={new_hum} pres={new_pres}", flush=True)
+            print(f"[INSERT] {did} temp={new_temp} hmdt={new_hmdt} press={new_press}", flush=True)
 
         except Exception as exc:
             print(f"Error: {exc} — reconnecting...", flush=True)

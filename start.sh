@@ -19,6 +19,8 @@ echo ""
 
 echo "Building custom images (no cache to ensure latest code is used)..."
 docker compose build --no-cache db2-data-generator frontend
+echo "Removing dangling (<none>) images..."
+docker images -f "dangling=true" -q | xargs docker rmi 2>/dev/null || true
 
 echo "Starting all services..."
 docker compose up -d

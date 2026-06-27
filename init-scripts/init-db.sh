@@ -17,14 +17,13 @@ echo "=== Creating IOT_DEVICES table ==="
 cat > /tmp/create_iot_devices.sql << 'EOF'
 CONNECT TO testdb;
 CREATE TABLE DB2INST1.IOT_DEVICES (
-    deviceID     VARCHAR(50)   NOT NULL PRIMARY KEY,
-    vendor       VARCHAR(100)  NOT NULL,
-    serialNumber VARCHAR(100)  NOT NULL,
-    temperature  DOUBLE,
-    humidity     DOUBLE,
-    pressure     DOUBLE,
-    createdAt    TIMESTAMP     NOT NULL WITH DEFAULT CURRENT TIMESTAMP,
-    updatedAt    TIMESTAMP     NOT NULL WITH DEFAULT CURRENT TIMESTAMP
+    device_identifier  VARCHAR(50)   NOT NULL,
+    vendor_name        VARCHAR(100)  NOT NULL,
+    serial_number      VARCHAR(100)  NOT NULL,
+    temp               DOUBLE,
+    hmdt               DOUBLE,
+    press              DOUBLE,
+    created_timestamp  TIMESTAMP     NOT NULL WITH DEFAULT CURRENT TIMESTAMP
 );
 COMMIT;
 CONNECT RESET;
