@@ -3,6 +3,7 @@ IoT device data generator — inserts a new sensor reading row every 0.5 seconds
 Device metadata (identifier, vendor, serial) is stable per device; only sensor
 values vary. DB2 is append-only (no updates), acting as a commit log.
 """
+
 import os
 import time
 import random
@@ -18,13 +19,26 @@ NUM_DEVICES = 10
 
 # Fixed metadata per device — stable across all inserts
 DEVICES = [
-    {"device_identifier": f"device-{i:02d}",
-     "vendor_name": vendor,
-     "serial_number": f"SN{100000 + i}"}
-    for i, vendor in enumerate([
-        "SensorCorp", "IoTWorks", "DataFlow", "SmartTech", "DeviceNet",
-        "CloudSense", "TelemetryPro", "MeterMax", "GaugeHub", "StreamData"
-    ], start=1)
+    {
+        "device_identifier": f"device-{i:02d}",
+        "vendor_name": vendor,
+        "serial_number": f"SN{100000 + i}",
+    }
+    for i, vendor in enumerate(
+        [
+            "SensorCorp",
+            "IoTWorks",
+            "DataFlow",
+            "SmartTech",
+            "DeviceNet",
+            "CloudSense",
+            "TelemetryPro",
+            "MeterMax",
+            "GaugeHub",
+            "StreamData",
+        ],
+        start=1,
+    )
 ]
 
 # Per-device sensor state for realistic incremental drift
@@ -39,18 +53,37 @@ sensor_state = {
 
 
 def try_connect():
-    return jaydebeapi.connect(JDBC_DRIVER, DB2_URL, [DB2_USER, DB2_PASSWORD], JDBC_JAR)
+    return jaydebeapi.connect(
+        JDBC_DRIVER,
+        DB2_URL,
+        [
+            DB2_USER,
+            DB2_PASSWORD,
+        ],
+        JDBC_JAR,
+    )
 
 
 def wait_and_connect():
     start = time.time()
     attempt = 0
-    print("Waiting for DB2 to be ready (first boot takes 3-5 min on Apple Silicon)...", flush=True)
+    print(
+        "Waiting for DB2 to be ready (first boot takes 3-5 min on Apple Silicon)...",
+        flush=True,
+    )
     while True:
         try:
             conn = try_connect()
             elapsed = int(time.time() - start)
             print(f"DB2 is ready ({elapsed}s).", flush=True)
+
+            # Verify both tables exist before returning
+            curs = conn.cursor()
+            curs.execute("SELECT COUNT(*) FROM DB2INST1.IOT_DEVICES")
+            curs.fetchone()
+            curs.execute("SELECT COUNT(*) FROM DB2INST1.IOT_DEVICES_MEASUREMENTS")
+            curs.fetchone()
+            print("Tables verified.", flush=True)
             return conn
         except Exception:
             attempt += 1
@@ -66,7 +99,72 @@ def run():
     conn = wait_and_connect()
     curs = conn.cursor()
 
-    print("Data generation started (2 inserts/second, 10 IoT devices).", flush=True)
+    print("Seeding 10 devices into DB2...", flush=True)
+    for device in DEVICES:
+        try:
+            # Check if device already exists
+            curs.execute(
+                "SELECT 1 FROM DB2INST1.IOT_DEVICES WHERE device_identifier = ?",
+                [device["device_identifier"]],
+            )
+            if curs.fetchone():
+                print(f"[SEED] {device['device_identifier']} already exists (skipped)", flush=True)
+                continue
+
+            # Insert the device
+            curs.execute(
+                "INSERT INTO DB2INST1.IOT_DEVICES "
+                "(device_identifier, vendor_name, serial_number, created_timestamp) "
+                "VALUES (?, ?, ?, CURRENT TIMESTAMP)",
+                [
+                    device["device_identifier"],
+                    device["vendor_name"],
+                    device["serial_number"],
+                ],
+            )
+            conn.commit()
+            print(f"[SEED] {device['device_identifier']}", flush=True)
+        except Exception as exc:
+            print(f"[SEED] {device['device_identifier']} ERROR: {exc}", flush=True)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            conn = wait_and_connect()
+            curs = conn.cursor()
+
+    print("Writing initial baseline measurements for each device...", flush=True)
+    for device in DEVICES:
+        did = device["device_identifier"]
+        state = sensor_state[did]
+        try:
+            curs.execute(
+                "INSERT INTO DB2INST1.IOT_DEVICES_MEASUREMENTS "
+                "(device_identifier, temp, hmdt, press, created_timestamp) "
+                "VALUES (?, ?, ?, ?, CURRENT TIMESTAMP)",
+                [
+                    did,
+                    state["temp"],
+                    state["hmdt"],
+                    state["press"],
+                ],
+            )
+            conn.commit()
+            print(
+                f"[BASELINE] {did} temp={state['temp']} hmdt={state['hmdt']} press={state['press']}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"[BASELINE] {did} ERROR: {exc}", flush=True)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    print(
+        "Data generation started (2 inserts/second, 10 IoT devices, random-walk measurements).",
+        flush=True,
+    )
 
     while True:
         try:
@@ -74,31 +172,54 @@ def run():
             did = device["device_identifier"]
             state = sensor_state[did]
 
-            new_temp  = round(max(10, min(30, state["temp"]  + random.uniform(-0.5, 0.5))), 2)
-            new_hmdt  = round(max(20, min(80, state["hmdt"]  + random.uniform(-1, 1))), 2)
-            new_press = round(max(990, min(1030, state["press"] + random.uniform(-0.5, 0.5))), 2)
+            new_temp = round(
+                max(10, min(30, state["temp"] + random.uniform(-0.5, 0.5))),
+                2,
+            )
+            new_hmdt = round(
+                max(20, min(80, state["hmdt"] + random.uniform(-1, 1))),
+                2,
+            )
+            new_press = round(
+                max(990, min(1030, state["press"] + random.uniform(-0.5, 0.5))),
+                2,
+            )
 
-            sensor_state[did]["temp"]  = new_temp
-            sensor_state[did]["hmdt"]  = new_hmdt
+            sensor_state[did]["temp"] = new_temp
+            sensor_state[did]["hmdt"] = new_hmdt
             sensor_state[did]["press"] = new_press
 
             curs.execute(
-                "INSERT INTO DB2INST1.IOT_DEVICES "
-                "(device_identifier, vendor_name, serial_number, temp, hmdt, press, created_timestamp) "
-                "VALUES (?, ?, ?, ?, ?, ?, CURRENT TIMESTAMP)",
-                [did, device["vendor_name"], device["serial_number"], new_temp, new_hmdt, new_press],
+                "INSERT INTO DB2INST1.IOT_DEVICES_MEASUREMENTS "
+                "(device_identifier, temp, hmdt, press, created_timestamp) "
+                "VALUES (?, ?, ?, ?, CURRENT TIMESTAMP)",
+                [
+                    did,
+                    new_temp,
+                    new_hmdt,
+                    new_press,
+                ],
             )
             conn.commit()
-            print(f"[INSERT] {did} temp={new_temp} hmdt={new_hmdt} press={new_press}", flush=True)
+            print(
+                f"[MEASUREMENT] {did} temp={new_temp} hmdt={new_hmdt} press={new_press}",
+                flush=True,
+            )
 
         except Exception as exc:
-            print(f"Error: {exc} — reconnecting...", flush=True)
-            try:
-                conn.close()
-            except Exception:
-                pass
-            conn = wait_and_connect()
-            curs = conn.cursor()
+            exc_str = str(exc)
+            if "SQLCODE=-530" in exc_str or "foreign key" in exc_str.lower():
+                # FK constraint error — device might not exist, but this is unusual
+                print(f"Warning: FK constraint on {did} — skipping this measurement", flush=True)
+            else:
+                # Other error — reconnect and retry
+                print(f"Error: {exc} — reconnecting...", flush=True)
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = wait_and_connect()
+                curs = conn.cursor()
 
         time.sleep(0.5)
 

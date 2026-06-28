@@ -12,7 +12,7 @@ KAFKA_CONNECT_URL = os.environ.get("KAFKA_CONNECT_URL", "http://connect:8083")
 FLINK_URL = os.environ.get("FLINK_URL", "http://flink-jobmanager:9081")
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090")
 
-TARGET_TOPICS = {"iot_devices_db2", "iot_devices_avg"}
+TARGET_TOPICS = {"iot_devices_db2", "iot_devices_measurements_db2", "iot_devices_merged", "iot_devices_avg"}
 
 
 def fmt_bytes(bps: float) -> str:
@@ -161,19 +161,45 @@ class LineageService:
             }})
             node_ids[topic] = nid
 
-        # --- FLINK (always shown; status from API if running) ---
-        if flink_jobs:
-            job = flink_jobs[0]
-            flink_label = f"Flink\n(RUNNING)"
-            flink_detail = {"status": job["status"], "job_id": job["id"], "name": job["name"]}
+        # --- FLINK JOBS ---
+        # Assume first job is merge (if multiple), second is average
+        merge_job = None
+        avg_job = None
+        if len(flink_jobs) >= 2:
+            merge_job = flink_jobs[0]
+            avg_job = flink_jobs[1]
+            merge_label = "Flink Merge\n(RUNNING)"
+            merge_detail = {"status": merge_job["status"], "job_id": merge_job["id"], "name": merge_job["name"]}
+            nodes.append({"data": {
+                "id": "flink-merge", "label": merge_label, "type": "processor",
+                "detail": merge_detail
+            }})
+            node_ids["flink-merge"] = "flink-merge"
+
+            avg_label = "Flink Average\n(RUNNING)"
+            avg_detail = {"status": avg_job["status"], "job_id": avg_job["id"], "name": avg_job["name"]}
+            nodes.append({"data": {
+                "id": "flink-avg", "label": avg_label, "type": "processor",
+                "detail": avg_detail
+            }})
+            node_ids["flink-avg"] = "flink-avg"
+        elif len(flink_jobs) == 1:
+            # Only one Flink job — assume it's the average job (backward compatibility)
+            avg_job = flink_jobs[0]
+            avg_label = "Flink Average\n(RUNNING)"
+            avg_detail = {"status": avg_job["status"], "job_id": avg_job["id"], "name": avg_job["name"]}
+            nodes.append({"data": {
+                "id": "flink-avg", "label": avg_label, "type": "processor",
+                "detail": avg_detail
+            }})
+            node_ids["flink-avg"] = "flink-avg"
         else:
-            flink_label = "Flink\n(stopped)"
-            flink_detail = {"status": "NOT_RUNNING"}
-        nodes.append({"data": {
-            "id": "flink-job", "label": flink_label, "type": "processor",
-            "detail": flink_detail
-        }})
-        node_ids["flink"] = "flink-job"
+            # No jobs running
+            nodes.append({"data": {
+                "id": "flink-avg", "label": "Flink\n(stopped)", "type": "processor",
+                "detail": {"status": "NOT_RUNNING"}
+            }})
+            node_ids["flink-avg"] = "flink-avg"
 
         # --- SINKS ---
         for sink_name, sink_info in sinks.items():
@@ -196,14 +222,14 @@ class LineageService:
 
         # --- WEBAPP CONSUMER (static node — always present) ---
         webapp_group = "frontend-consumer-group"
-        webapp_lag_devices = self.get_lag(webapp_group, "iot_devices_db2")
+        webapp_lag_merged = self.get_lag(webapp_group, "iot_devices_merged")
         webapp_lag_avg = self.get_lag(webapp_group, "iot_devices_avg")
         nodes.append({"data": {
             "id": "webapp-consumer", "label": "WebApp\nDashboard", "type": "sink",
             "detail": {
                 "group_id": webapp_group,
-                "topics": ["iot_devices_db2", "iot_devices_avg"],
-                "lag_devices": webapp_lag_devices,
+                "topics": ["iot_devices_merged", "iot_devices_avg"],
+                "lag_merged": webapp_lag_merged,
                 "lag_avg": webapp_lag_avg,
             }
         }})
@@ -211,9 +237,11 @@ class LineageService:
 
         # --- EDGES ---
         dev_tp = throughputs.get("iot_devices_db2", 0)
+        meas_tp = throughputs.get("iot_devices_measurements_db2", 0)
+        merged_tp = throughputs.get("iot_devices_merged", 0)
         avg_tp = throughputs.get("iot_devices_avg", 0)
 
-        # Source → IOT_DEVICES
+        # Source → IOT_DEVICES (devices table)
         if "db2-source" in node_ids and "iot_devices_db2" in node_ids:
             edges.append({"data": {
                 "id": "edge-source-devices",
@@ -221,19 +249,51 @@ class LineageService:
                 "label": fmt_bytes(dev_tp), "throughput": dev_tp,
             }})
 
-        # IOT_DEVICES → Flink (no lag: Flink uses its own state backend, not __consumer_offsets)
-        if "flink" in node_ids and "iot_devices_db2" in node_ids:
+        # Source → IOT_DEVICES_MEASUREMENTS (measurements table)
+        if "db2-source" in node_ids and "iot_devices_measurements_db2" in node_ids:
             edges.append({"data": {
-                "id": "edge-devices-flink",
-                "source": node_ids["iot_devices_db2"], "target": "flink-job",
+                "id": "edge-source-measurements",
+                "source": "db2-source", "target": node_ids["iot_devices_measurements_db2"],
+                "label": fmt_bytes(meas_tp), "throughput": meas_tp,
+            }})
+
+        # IOT_DEVICES → Flink Merge
+        if "flink-merge" in node_ids and "iot_devices_db2" in node_ids:
+            edges.append({"data": {
+                "id": "edge-devices-merge",
+                "source": node_ids["iot_devices_db2"], "target": "flink-merge",
                 "label": fmt_bytes(dev_tp), "throughput": dev_tp,
             }})
 
-        # Flink → iot_devices_avg
-        if "flink" in node_ids and "iot_devices_avg" in node_ids:
+        # IOT_DEVICES_MEASUREMENTS → Flink Merge
+        if "flink-merge" in node_ids and "iot_devices_measurements_db2" in node_ids:
             edges.append({"data": {
-                "id": "edge-flink-avg",
-                "source": "flink-job", "target": node_ids["iot_devices_avg"],
+                "id": "edge-measurements-merge",
+                "source": node_ids["iot_devices_measurements_db2"], "target": "flink-merge",
+                "label": fmt_bytes(meas_tp), "throughput": meas_tp,
+            }})
+
+        # Flink Merge → iot_devices_merged
+        if "flink-merge" in node_ids and "iot_devices_merged" in node_ids:
+            edges.append({"data": {
+                "id": "edge-merge-merged",
+                "source": "flink-merge", "target": node_ids["iot_devices_merged"],
+                "label": fmt_bytes(merged_tp), "throughput": merged_tp,
+            }})
+
+        # iot_devices_merged → Flink Average
+        if "flink-avg" in node_ids and "iot_devices_merged" in node_ids:
+            edges.append({"data": {
+                "id": "edge-merged-avg",
+                "source": node_ids["iot_devices_merged"], "target": "flink-avg",
+                "label": fmt_bytes(merged_tp), "throughput": merged_tp,
+            }})
+
+        # Flink Average → iot_devices_avg
+        if "flink-avg" in node_ids and "iot_devices_avg" in node_ids:
+            edges.append({"data": {
+                "id": "edge-avg-output",
+                "source": "flink-avg", "target": node_ids["iot_devices_avg"],
                 "label": fmt_bytes(avg_tp), "throughput": avg_tp,
             }})
 
@@ -253,8 +313,12 @@ class LineageService:
                     "throughput": tp, "lag": lag,
                 }})
 
-        # WebApp reads IOT_DEVICES and iot_devices_avg
-        for topic, lag in [("iot_devices_db2", webapp_lag_devices), ("iot_devices_avg", webapp_lag_avg)]:
+        # WebApp reads iot_devices_merged and iot_devices_avg
+        webapp_group = "frontend-consumer-group"
+        webapp_lag_merged = self.get_lag(webapp_group, "iot_devices_merged")
+        webapp_lag_avg = self.get_lag(webapp_group, "iot_devices_avg")
+
+        for topic, lag in [("iot_devices_merged", webapp_lag_merged), ("iot_devices_avg", webapp_lag_avg)]:
             if topic in node_ids:
                 tp = throughputs.get(topic, 0)
                 lag_str = f" | Lag: {lag}" if lag else ""

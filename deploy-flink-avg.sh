@@ -20,8 +20,8 @@ done
 
 # Write full SQL (table definitions + INSERT job) to a temp file
 cat > /tmp/iot_flink.sql << 'EOF'
-DROP TABLE IF EXISTS `iot_devices_source`;
-CREATE TABLE `iot_devices_source` (
+DROP TABLE IF EXISTS `iot_devices_merged`;
+CREATE TABLE `iot_devices_merged` (
     `deviceID`     STRING,
     `vendor`       STRING,
     `serialNumber` STRING,
@@ -32,7 +32,7 @@ CREATE TABLE `iot_devices_source` (
     WATERMARK FOR `updatedAt` AS `updatedAt` - INTERVAL '10' SECOND
 ) WITH (
     'connector'                    = 'kafka',
-    'topic'                        = 'iot_devices_db2',
+    'topic'                        = 'iot_devices_merged',
     'properties.bootstrap.servers' = 'broker:29092',
     'properties.group.id'          = 'flink-iot-averages',
     'scan.startup.mode'            = 'earliest-offset',
@@ -74,7 +74,7 @@ SELECT
     ROUND(AVG(`humidity`), 2)    AS `avg_humidity`,
     ROUND(AVG(`pressure`), 2)    AS `avg_pressure`
 FROM TABLE(
-    TUMBLE(TABLE `iot_devices_source`, DESCRIPTOR(`updatedAt`), INTERVAL '15' SECOND)
+    TUMBLE(TABLE `iot_devices_merged`, DESCRIPTOR(`updatedAt`), INTERVAL '15' SECOND)
 )
 GROUP BY `deviceID`, `window_start`, `window_end`;
 EOF

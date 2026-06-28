@@ -12,11 +12,16 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    html, body {
+      height: 100%;
+    }
+
     body {
       font-family: 'Segoe UI', system-ui, sans-serif;
       background: #0f1117;
       color: #e2e8f0;
-      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
 
     header {
@@ -74,10 +79,13 @@
 
     .tab-content {
       display: none;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
     }
 
     .tab-content.active {
-      display: block;
+      display: flex;
     }
 
     .status-bar {
@@ -105,6 +113,10 @@
 
     .main {
       padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
     }
 
     .fanout-badges {
@@ -336,7 +348,7 @@
 
   <!-- Tab 3: Data Lineage -->
   <div id="lineage" class="tab-content">
-    <div id="lineage-container" style="width: 100%; height: 600px; background: #1e293b; border: 1px solid #334155; border-radius: 8px; margin-top: 1rem;"></div>
+    <div id="lineage-container" style="width: 100%; height: 100%; flex: 1; background: #1e293b; border: 1px solid #334155; border-radius: 8px; margin-top: 1rem;"></div>
     <div id="lineage-details" style="margin-top: 1rem; padding: 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; display: none;">
       <h3 id="detail-title" style="color: #38bdf8; margin-bottom: 0.5rem;"></h3>
       <pre id="detail-content" style="color: #e2e8f0; font-size: 0.8rem; overflow: auto; max-height: 200px;"></pre>
@@ -628,11 +640,8 @@
         } else {
           openNodeModal(type, detail);
         }
-      } else {
-        // processor (Flink) — keep existing detail panel
-        document.getElementById('detail-title').textContent = label;
-        document.getElementById('detail-content').textContent = JSON.stringify(detail, null, 2);
-        document.getElementById('lineage-details').style.display = 'block';
+      } else if (type === 'processor') {
+        openNodeModal('processor', detail, label);
       }
     });
 
@@ -698,7 +707,7 @@
   console.log('[Lineage] WebSocket listener registered');
 
   // --- Unified node inspection modal ---
-  function openNodeModal(nodeType, nodeData) {
+  function openNodeModal(nodeType, nodeData, label) {
     const overlay = document.getElementById('node-modal-overlay');
     document.getElementById('modal-title').textContent = '…';
     document.getElementById('modal-badge').textContent = '';
@@ -717,6 +726,9 @@
       document.getElementById('modal-title').textContent = 'WebApp Dashboard';
       fetch('/api/webapp/status')
         .then(r => r.json()).then(renderWebappModal).catch(err => renderError(String(err)));
+    } else if (nodeType === 'processor') {
+      document.getElementById('modal-title').textContent = label || 'Flink Job';
+      renderProcessorModal(nodeData);
     }
   }
 
@@ -815,6 +827,16 @@
     for (const [topic, lag] of Object.entries(data.lag)) {
       html += row(`Lag · ${topic}`, lag);
     }
+    document.getElementById('modal-body').innerHTML = html;
+  }
+
+  function renderProcessorModal(data) {
+    document.getElementById('modal-badge').innerHTML = statusBadge(data.status || 'UNKNOWN');
+    let html = row('Job ID', data.job_id, true);
+    html += row('Job Name', data.name || '(unknown)');
+    html += row('Status', data.status || 'UNKNOWN');
+    html += `<div style="padding:1rem 1.25rem;background:#0f172a;border-top:1px solid #1e293b;color:#64748b;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;margin-top:0.5rem;">Full Details</div>`;
+    html += `<pre style="padding:1rem 1.25rem;color:#cbd5e1;font-size:0.75rem;overflow:auto;max-height:200px;font-family:monospace;margin:0;">${JSON.stringify(data, null, 2)}</pre>`;
     document.getElementById('modal-body').innerHTML = html;
   }
 

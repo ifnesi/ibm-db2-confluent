@@ -337,7 +337,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP: broker:29092
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
-      KAFKA_TOPIC_DEVICES: iot_devices_db2
+      KAFKA_TOPIC_DEVICES: iot_devices_merged
       KAFKA_TOPIC_AVG: iot_devices_avg
 
 volumes:

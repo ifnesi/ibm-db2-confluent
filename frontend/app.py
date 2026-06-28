@@ -33,7 +33,7 @@ KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "broker:29092")
 SCHEMA_REGISTRY_URL = os.environ.get(
     "SCHEMA_REGISTRY_URL", "http://schema-registry:8081"
 )
-KAFKA_TOPIC_DEVICES = os.environ.get("KAFKA_TOPIC_DEVICES", "iot_devices_db2")
+KAFKA_TOPIC_DEVICES = os.environ.get("KAFKA_TOPIC_DEVICES", "iot_devices_merged")
 KAFKA_TOPIC_AVG = os.environ.get("KAFKA_TOPIC_AVG", "iot_devices_avg")
 
 # Counter for total events received by Kafka consumer thread
@@ -100,6 +100,42 @@ def to_json_safe(record: dict) -> dict:
 def kafka_consumer_thread():
     print("Kafka consumer starting — waiting 15 s for broker …", flush=True)
     time.sleep(15)
+
+    # Wait for required topics to exist before subscribing
+    print(f"Waiting for topics {KAFKA_TOPIC_DEVICES} and {KAFKA_TOPIC_AVG} to be created...", flush=True)
+    topics_ready = False
+    attempt = 0
+    while not topics_ready:
+        try:
+            check_consumer = Consumer(
+                {
+                    "bootstrap.servers": KAFKA_BOOTSTRAP,
+                    "group.id": "frontend-topic-check",
+                    "auto.offset.reset": "earliest",
+                    "enable.auto.commit": False,
+                }
+            )
+            metadata = check_consumer.list_topics(timeout=5)
+            available_topics = set(metadata.topics.keys())
+
+            if KAFKA_TOPIC_DEVICES in available_topics and KAFKA_TOPIC_AVG in available_topics:
+                print(f"✓ Topics ready: {KAFKA_TOPIC_DEVICES}, {KAFKA_TOPIC_AVG}", flush=True)
+                topics_ready = True
+                check_consumer.close()
+            else:
+                attempt += 1
+                missing = []
+                if KAFKA_TOPIC_DEVICES not in available_topics:
+                    missing.append(KAFKA_TOPIC_DEVICES)
+                if KAFKA_TOPIC_AVG not in available_topics:
+                    missing.append(KAFKA_TOPIC_AVG)
+                print(f"  [attempt {attempt}] Waiting for: {', '.join(missing)}", flush=True)
+                check_consumer.close()
+                time.sleep(5)
+        except Exception as e:
+            attempt += 1
+            print(f"  [attempt {attempt}] Topic check failed: {e} — retrying...", flush=True)
+            time.sleep(5)
 
     consumer = Consumer(
         {
