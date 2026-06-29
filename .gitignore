@@ -18,5 +18,10 @@ db2-data/
 *.bak
 *.backup
 
-# Python
-*.pyc
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Claude
+.claude

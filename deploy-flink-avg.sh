@@ -21,6 +21,7 @@ done
 # Write full SQL (table definitions + INSERT job) to a temp file
 cat > /tmp/iot_flink.sql << 'EOF'
 DROP TABLE IF EXISTS `iot_devices_merged`;
+DROP TABLE IF EXISTS `iot_devices_merged`;
 CREATE TABLE `iot_devices_merged` (
     `deviceID`     STRING,
     `vendor`       STRING,
@@ -28,18 +29,19 @@ CREATE TABLE `iot_devices_merged` (
     `temperature`  DOUBLE,
     `humidity`     DOUBLE,
     `pressure`     DOUBLE,
+    `latitude`     DOUBLE,
+    `longitude`    DOUBLE,
     `updatedAt`    TIMESTAMP(3),
-    WATERMARK FOR `updatedAt` AS `updatedAt` - INTERVAL '10' SECOND
+    WATERMARK FOR `updatedAt` AS `updatedAt` - INTERVAL '10' SECOND,
+    PRIMARY KEY (`deviceID`) NOT ENFORCED
 ) WITH (
-    'connector'                    = 'kafka',
+    'connector'                    = 'upsert-kafka',
     'topic'                        = 'iot_devices_merged',
     'properties.bootstrap.servers' = 'broker:29092',
-    'properties.group.id'          = 'flink-iot-averages',
-    'scan.startup.mode'            = 'earliest-offset',
     'key.format'                   = 'raw',
-    'key.fields'                   = 'deviceID',
     'value.format'                 = 'avro-confluent',
-    'value.avro-confluent.url'     = 'http://schema-registry:8081'
+    'value.avro-confluent.url'     = 'http://schema-registry:8081',
+    'value.fields-include'         = 'ALL'
 );
 
 DROP TABLE IF EXISTS `iot_devices_avg`;
@@ -47,6 +49,8 @@ CREATE TABLE `iot_devices_avg` (
     `deviceID`        STRING,
     `vendor`          STRING,
     `serialNumber`    STRING,
+    `latitude`        DOUBLE,
+    `longitude`       DOUBLE,
     `window_start`    TIMESTAMP(3),
     `window_end`      TIMESTAMP(3),
     `avg_temperature` DOUBLE,
@@ -66,8 +70,10 @@ CREATE TABLE `iot_devices_avg` (
 INSERT INTO `iot_devices_avg`
 SELECT
     `deviceID`,
-    MAX(`vendor`)             AS `vendor`,
-    MAX(`serialNumber`)       AS `serialNumber`,
+    MAX(`vendor`)                AS `vendor`,
+    MAX(`serialNumber`)          AS `serialNumber`,
+    MAX(`latitude`)              AS `latitude`,
+    MAX(`longitude`)             AS `longitude`,
     `window_start`,
     `window_end`,
     ROUND(AVG(`temperature`), 2) AS `avg_temperature`,

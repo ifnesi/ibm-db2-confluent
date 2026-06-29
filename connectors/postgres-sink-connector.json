@@ -21,6 +21,6 @@
     "transforms.routeMerged.regex": "iot_devices_merged",
     "transforms.routeMerged.replacement": "iot_devices",
     "transforms.renameFields.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
-    "transforms.renameFields.renames": "deviceID:device_id,vendor:vendor,serialNumber:serial_number,temperature:temperature,humidity:humidity,pressure:pressure,updatedAt:updated_at,avg_temperature:avg_temperature,avg_humidity:avg_humidity,avg_pressure:avg_pressure,window_start:window_start,window_end:window_end"
+    "transforms.renameFields.renames": "deviceID:device_id,vendor:vendor,serialNumber:serial_number,temperature:temperature,humidity:humidity,pressure:pressure,latitude:latitude,longitude:longitude,updatedAt:updated_at,avg_temperature:avg_temperature,avg_humidity:avg_humidity,avg_pressure:avg_pressure,window_start:window_start,window_end:window_end"
   }
 }

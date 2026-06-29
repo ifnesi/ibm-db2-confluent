@@ -18,27 +18,39 @@ JDBC_JAR = "/app/db2jcc4.jar"
 NUM_DEVICES = 10
 
 # Fixed metadata per device — stable across all inserts
+VENDORS = sorted([
+    "SensorCorp",
+    "IoTWorks",
+    "DataFlow",
+    "SmartTech",
+    "DeviceNet",
+    "CloudSense",
+    "TelemetryPro",
+    "MeterMax",
+    "GaugeHub",
+    "StreamData",
+], key=lambda _: random.random())
+COORDINATES = sorted([
+    [51.5074, -0.1278],
+    [51.5200, -0.1000],
+    [51.4890, -0.0700],
+    [51.5300, -0.1800],
+    [51.4600, -0.1200],
+    [51.5500, -0.0200],
+    [51.4800, 0.0200],
+    [51.5900, 0.0700],
+    [51.4300, 0.1000],
+    [51.5000, -0.2500],
+], key=lambda _: random.random())
 DEVICES = [
     {
         "device_identifier": f"device-{i:02d}",
-        "vendor_name": vendor,
+        "vendor_name": data[0],
         "serial_number": f"SN{100000 + i}",
+        "lat": data[1][0],
+        "long": data[1][1],
     }
-    for i, vendor in enumerate(
-        [
-            "SensorCorp",
-            "IoTWorks",
-            "DataFlow",
-            "SmartTech",
-            "DeviceNet",
-            "CloudSense",
-            "TelemetryPro",
-            "MeterMax",
-            "GaugeHub",
-            "StreamData",
-        ],
-        start=1,
-    )
+    for i, data in enumerate(zip(VENDORS, COORDINATES), start=1)
 ]
 
 # Per-device sensor state for realistic incremental drift
@@ -114,12 +126,14 @@ def run():
             # Insert the device
             curs.execute(
                 "INSERT INTO DB2INST1.IOT_DEVICES "
-                "(device_identifier, vendor_name, serial_number, created_timestamp) "
-                "VALUES (?, ?, ?, CURRENT TIMESTAMP)",
+                "(device_identifier, vendor_name, serial_number, lat, long, created_timestamp) "
+                "VALUES (?, ?, ?, ?, ?, CURRENT TIMESTAMP)",
                 [
                     device["device_identifier"],
                     device["vendor_name"],
                     device["serial_number"],
+                    device["lat"],
+                    device["long"],
                 ],
             )
             conn.commit()

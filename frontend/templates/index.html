@@ -9,6 +9,8 @@
   <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
   <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
   <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -244,6 +246,68 @@
       position: relative;
       height: 260px;
     }
+
+    #map-container {
+      width: 100%;
+      height: 100%;
+      border-radius: 0.5rem;
+      border: 1px solid #334155;
+      background: #1e293b;
+    }
+
+    .leaflet-container {
+      background: #0f1117 !important;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+
+    .device-popup {
+      background: #1e293b !important;
+      border: 1px solid #334155 !important;
+      border-radius: 0.5rem;
+      color: #e2e8f0;
+      font-size: 0.8rem;
+      padding: 0 !important;
+    }
+
+    .device-popup .leaflet-popup-content {
+      margin: 0 !important;
+      padding: 0.6rem !important;
+      width: auto !important;
+      font-size: 0.8rem;
+    }
+
+    .device-popup .leaflet-popup-content-wrapper {
+      border-radius: 0.5rem !important;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+    }
+
+    .popup-title {
+      font-weight: 600;
+      color: #38bdf8;
+      margin-bottom: 0.5rem;
+      font-size: 0.9rem;
+    }
+
+    .popup-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.4rem;
+      padding: 0.15rem 0;
+      color: #cbd5e1;
+      font-size: 0.75rem;
+      line-height: 1.3;
+    }
+
+    .popup-label {
+      color: #94a3b8;
+      font-size: 0.75rem;
+      flex-shrink: 0;
+    }
+
+    .popup-separator {
+      border-top: 1px solid #334155;
+      margin: 0.4rem 0;
+    }
   </style>
 </head>
 <body>
@@ -287,6 +351,7 @@
   <div class="tabs">
     <button class="tab-button active" onclick="switchTab('devices')">Devices Table</button>
     <button class="tab-button" onclick="switchTab('averages')">Average Charts (15 min)</button>
+    <button class="tab-button" onclick="switchTab('map')">Device Locations</button>
     <button class="tab-button" onclick="switchTab('lineage')">Data Lineage</button>
   </div>
 
@@ -346,7 +411,12 @@
     </div>
   </div>
 
-  <!-- Tab 3: Data Lineage -->
+  <!-- Tab 3: Device Locations Map -->
+  <div id="map" class="tab-content">
+    <div id="map-container"></div>
+  </div>
+
+  <!-- Tab 4: Data Lineage -->
   <div id="lineage" class="tab-content">
     <div id="lineage-container" style="width: 100%; height: 100%; flex: 1; background: #1e293b; border: 1px solid #334155; border-radius: 8px; margin-top: 1rem;"></div>
     <div id="lineage-details" style="margin-top: 1rem; padding: 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 8px; display: none;">
@@ -408,6 +478,14 @@
     // Show selected tab
     document.getElementById(tab).classList.add('active');
     event.target.classList.add('active');
+
+    // Handle map initialization
+    if (tab === 'map') {
+      setTimeout(() => {
+        initMap();
+        if (mapInstance) mapInstance.invalidateSize();
+      }, 50);
+    }
 
     // If switching to lineage tab, trigger load and polling
     if (tab === 'lineage') {
@@ -540,7 +618,27 @@
   });
 
   socket.on('initial_devices', (devices) => {
-    devices.forEach(dev => upsertDeviceRow(dev, !(String(dev.deviceID) in deviceRows)));
+    devices.forEach(dev => {
+      upsertDeviceRow(dev, !(String(dev.deviceID) in deviceRows));
+
+      // Populate device info for map
+      const deviceId = String(dev.deviceID);
+      if (!deviceInfo[deviceId]) {
+        deviceInfo[deviceId] = { current: {}, avg: {} };
+      }
+      deviceInfo[deviceId].vendor = dev.vendor;
+      deviceInfo[deviceId].serialNumber = dev.serialNumber;
+      deviceInfo[deviceId].current = {
+        temperature: dev.temperature,
+        humidity: dev.humidity,
+        pressure: dev.pressure
+      };
+
+      // Add marker if map is initialized and device has coordinates
+      if (mapInitialized && dev.latitude && dev.longitude) {
+        addOrUpdateMarker(deviceId, dev.latitude, dev.longitude);
+      }
+    });
   });
 
   socket.on('initial_averages', (history) => {
@@ -554,6 +652,18 @@
           avg_pressure: p.avg_pressure
         });
       });
+      // Store latest average for map
+      if (points.length > 0) {
+        const latest = points[points.length - 1];
+        if (!deviceInfo[deviceId]) {
+          deviceInfo[deviceId] = { current: {}, avg: {} };
+        }
+        deviceInfo[deviceId].avg = {
+          temperature: latest.avg_temperature,
+          humidity: latest.avg_humidity,
+          pressure: latest.avg_pressure
+        };
+      }
     });
   });
 
@@ -561,11 +671,186 @@
     eventCount++;
     document.getElementById('events').textContent = eventCount;
     upsertDeviceRow(dev, dev._new === true);
+
+    // Update device info for map
+    const deviceId = String(dev.deviceID);
+    if (!deviceInfo[deviceId]) {
+      deviceInfo[deviceId] = { current: {}, avg: {} };
+    }
+    deviceInfo[deviceId].vendor = dev.vendor;
+    deviceInfo[deviceId].serialNumber = dev.serialNumber;
+    deviceInfo[deviceId].current = {
+      temperature: dev.temperature,
+      humidity: dev.humidity,
+      pressure: dev.pressure
+    };
+
+    // Add/update marker if map is initialized
+    if (mapInitialized && dev.latitude && dev.longitude) {
+      addOrUpdateMarker(deviceId, dev.latitude, dev.longitude);
+    }
   });
 
   socket.on('average_update', (avg) => {
     updateAverageChart(avg);
+
+    // Update average data for map
+    const deviceId = String(avg.deviceID);
+    if (!deviceInfo[deviceId]) {
+      deviceInfo[deviceId] = { current: {}, avg: {} };
+    }
+    deviceInfo[deviceId].avg = {
+      temperature: avg.avg_temperature,
+      humidity: avg.avg_humidity,
+      pressure: avg.avg_pressure
+    };
+
+    // Update marker popup if it exists
+    if (mapInitialized && deviceMarkers[deviceId]) {
+      deviceMarkers[deviceId].setPopupContent(createMarkerPopup(deviceId));
+    }
   });
+
+  // --- Device Map via Leaflet ---
+  let mapInstance = null;
+  let mapInitialized = false;
+  const deviceMarkers = {};
+  const deviceInfo = {};
+
+  function initMap() {
+    if (mapInitialized) return;
+    mapInitialized = true;
+
+    const container = document.getElementById('map-container');
+    if (!container) return;
+
+    const centerLat = 51.5074;
+    const centerLon = -0.1278;
+
+    mapInstance = L.map(container, {
+      center: [centerLat, centerLon],
+      zoom: 12,
+      zoomControl: true,
+      scrollWheelZoom: true
+    });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors',
+      maxZoom: 19,
+      backgroundColor: '#1e293b'
+    }).addTo(mapInstance);
+
+    mapInstance.invalidateSize();
+  }
+
+  function createMarkerPopup(deviceId) {
+    const info = deviceInfo[deviceId] || {};
+    const current = info.current || {};
+    const avg = info.avg || {};
+
+    const temp = parseFloat(current.temperature || 0).toFixed(2);
+    const humidity = parseFloat(current.humidity || 0).toFixed(2);
+    const pressure = parseFloat(current.pressure || 0).toFixed(2);
+    const avgTemp = parseFloat(avg.temperature || 0).toFixed(2);
+    const avgHumidity = parseFloat(avg.humidity || 0).toFixed(2);
+    const avgPressure = parseFloat(avg.pressure || 0).toFixed(2);
+
+    const popupContent = `
+      <div style="width:360px;">
+        <div class="popup-title">${deviceId} — ${info.vendor || '—'}</div>
+        <div class="popup-row">
+          <span class="popup-label">Serial:</span>
+          <span>${info.serialNumber || '—'}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:0.5rem;">
+          <div>
+            <div style="font-size:0.7rem;color:#94a3b8;margin-bottom:0.25rem;font-weight:600;text-transform:uppercase;">CURRENT</div>
+            <div class="popup-row">
+              <span class="popup-label">Temp:</span>
+              <span>${temp}°C</span>
+            </div>
+            <div class="popup-row">
+              <span class="popup-label">Humidity:</span>
+              <span>${humidity}%</span>
+            </div>
+            <div class="popup-row">
+              <span class="popup-label">Pressure:</span>
+              <span>${pressure} hPa</span>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:0.7rem;color:#94a3b8;margin-bottom:0.25rem;font-weight:600;text-transform:uppercase;">15-MIN AVG</div>
+            <div class="popup-row">
+              <span class="popup-label">Temp:</span>
+              <span>${avgTemp}°C</span>
+            </div>
+            <div class="popup-row">
+              <span class="popup-label">Humidity:</span>
+              <span>${avgHumidity}%</span>
+            </div>
+            <div class="popup-row">
+              <span class="popup-label">Pressure:</span>
+              <span>${avgPressure} hPa</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    return popupContent;
+  }
+
+  function addOrUpdateMarker(deviceId, lat, lon) {
+    if (!mapInstance) return;
+
+    const temp = parseFloat(deviceInfo[deviceId]?.current?.temperature || 0);
+    let markerColor = '#94a3b8';
+    if (temp > 25) markerColor = '#ef4444';
+    else if (temp > 22) markerColor = '#f97316';
+    else if (temp < 15) markerColor = '#3b82f6';
+
+    if (!deviceMarkers[deviceId]) {
+      const markerIcon = L.divIcon({
+        html: `<div style="
+          background: ${markerColor};
+          border: 2px solid #1e293b;
+          border-radius: 50%;
+          width: 24px;
+          height: 24px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 12px;
+          color: white;
+          font-weight: bold;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+          transition: all 0.2s;
+        " class="device-marker">📍</div>`,
+        className: 'device-marker-icon',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
+        popupAnchor: [0, -12]
+      });
+
+      const marker = L.marker([lat, lon], { icon: markerIcon }).addTo(mapInstance);
+      marker.bindPopup(createMarkerPopup(deviceId), {
+        className: 'device-popup',
+        autoPan: false,
+        maxWidth: 380
+      });
+
+      marker.on('mouseover', function () {
+        this.openPopup();
+      });
+      marker.on('mouseout', function () {
+        this.closePopup();
+      });
+
+      deviceMarkers[deviceId] = marker;
+    } else {
+      deviceMarkers[deviceId].setPopupContent(createMarkerPopup(deviceId));
+    }
+  }
 
   // --- Data Lineage via WebSocket ---
   let cy = null;

@@ -6,7 +6,7 @@ This demo shows how to build a **live data pipeline** from IBM Db2 (IoT source) 
 
 ![Architecture Diagram](./imgs/demo-diagram.png)
 
-A **data generator** container seeds 10 IoT devices into Db2, then continuously inserts new sensor measurements (append-only) at 2 rows/second. Device metadata and measurements are stored in separate Db2 tables and streamed independently into Kafka. **Flink's first job** (merge) performs a LEFT JOIN to enrich measurements with device metadata, outputting to a unified stream. **Flink's second job** (average) calculates 15-second tumbling window averages per device/metric using the Window TVF API (with a 10-second late-event watermark) and writes results to a separate topic. Both merged and average data flow to all three sinks (PostgreSQL, Redis, and frontend). The **frontend** has three tabs: live device data table, line charts of the last 15 minutes of averages, and a real-time **data lineage graph** showing the full pipeline topology with throughput metrics.
+A **data generator** container seeds 10 IoT devices into Db2 with geolocation data (London-area coordinates), then continuously inserts new sensor measurements (append-only) at 2 rows/second. Device metadata and measurements are stored in separate Db2 tables and streamed independently into Kafka. **Flink's first job** (merge) performs a LEFT JOIN to enrich measurements with device metadata (including coordinates), outputting to a unified stream. **Flink's second job** (average) calculates 15-second tumbling window averages per device/metric using the Window TVF API (with a 10-second late-event watermark) and writes results to a separate topic. Both merged and average data flow to all three sinks (PostgreSQL, Redis, and frontend). The **frontend** has four tabs: live device data table, line charts of the last 15 minutes of averages, an interactive **map** showing device locations with live metrics, and a real-time **data lineage graph** showing the full pipeline topology with throughput metrics.
 
 ## Prerequisites
 
@@ -39,6 +39,8 @@ The first run pulls all images and builds the custom containers - allow **5~10 m
 | `device_identifier` | VARCHAR(50) | Primary key; e.g., `device-01` |
 | `vendor_name` | VARCHAR(100) | Device vendor |
 | `serial_number` | VARCHAR(100) | Device serial number |
+| `lat` | DOUBLE | Device latitude (London-area coordinates) |
+| `long` | DOUBLE | Device longitude (London-area coordinates) |
 | `created_timestamp` | TIMESTAMP | Device creation timestamp |
 
 **Table 2: `DB2INST1.IOT_DEVICES_MEASUREMENTS`** — Sensor measurements (append-only stream)
@@ -51,7 +53,7 @@ The first run pulls all images and builds the custom containers - allow **5~10 m
 | `press` | DOUBLE | Sensor reading in hPa (~1000–1025), stateful random walk |
 | `created_timestamp` | TIMESTAMP | Measurement timestamp (append-only) |
 
-> **Canonical format normalization:** The Db2 source connector applies a `ReplaceField` SMT that renames these Db2-specific column names to a canonical format (`deviceID`, `vendor`, `serialNumber`, `temperature`, `humidity`, `pressure`, `updatedAt`) before publishing to Kafka. This decouples the Db2 schema from the rest of the pipeline — any future Db2 column renames only require updating the SMT mapping, with zero changes downstream (Flink, sinks, frontend).
+> **Canonical format normalization:** The Db2 source connector applies a `ReplaceField` SMT that renames these Db2-specific column names to a canonical format (`deviceID`, `vendor`, `serialNumber`, `temperature`, `humidity`, `pressure`, `latitude`, `longitude`, `updatedAt`) before publishing to Kafka. This decouples the Db2 schema from the rest of the pipeline — any future Db2 column renames only require updating the SMT mapping, with zero changes downstream (Flink, sinks, frontend).
 >
 > Both tables are **append-only** (commit log pattern) — DB2 never updates rows. Upsert semantics are applied by the Flink merge job (LEFT JOIN on device_identifier) and at the sink level (PostgreSQL and Redis always reflect the latest reading per device).
 
@@ -240,7 +242,7 @@ Browse all keys visually at http://localhost:8087 (Redis Commander).
 
 ### Python/React Frontend (`localhost:5001`)
 
-The frontend automatically consumes from both Kafka topics and displays live data.
+The frontend automatically consumes from both Kafka topics and displays live data via WebSocket.
 
 **Devices Table** — raw device readings updated in real-time:
 
@@ -250,11 +252,18 @@ The frontend automatically consumes from both Kafka topics and displays live dat
 
 ![Frontend average charts](./imgs/frontend-charts.png)
 
+**Device Locations** — interactive OpenStreetMap showing device pins with geolocation data:
+- Markers colored by current temperature (red >25°C, orange >22°C, blue <15°C)
+- Hover tooltips display device info: ID, vendor, serial number, current metrics (temperature/humidity/pressure), and 15-minute rolling averages
+- Updates in real-time as sensor readings stream in
+
+![Frontend device map](./imgs/frontend-maps.png)
+
 **Data Lineage** — live pipeline topology graph showing nodes (DB2 Source → Kafka Topics → Flink → Sinks) with real-time bytes/sec throughput and consumer lag per edge:
 
 ![Frontend data lineage](./imgs/frontend-data-lineage.png)
 
-Data updates via WebSocket in real-time. Connection status and event counts shown in the status bar.
+Connection status and event counts shown in the status bar.
 
 ## Connector Management
 

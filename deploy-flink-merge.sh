@@ -25,6 +25,8 @@ CREATE TABLE `iot_devices_db2` (
     `deviceID`     STRING,
     `vendor`       STRING,
     `serialNumber` STRING,
+    `latitude`     DOUBLE,
+    `longitude`    DOUBLE,
     `updatedAt`    TIMESTAMP(3),
     WATERMARK FOR `updatedAt` AS `updatedAt` - INTERVAL '10' SECOND
 ) WITH (
@@ -67,6 +69,8 @@ CREATE TABLE `iot_devices_merged` (
     `temperature`  DOUBLE,
     `humidity`     DOUBLE,
     `pressure`     DOUBLE,
+    `latitude`     DOUBLE,
+    `longitude`    DOUBLE,
     `updatedAt`    TIMESTAMP(3),
     PRIMARY KEY (`deviceID`) NOT ENFORCED
 ) WITH (
@@ -87,6 +91,8 @@ SELECT
     m.`temperature`,
     m.`humidity`,
     m.`pressure`,
+    d.`latitude`,
+    d.`longitude`,
     m.`updatedAt`
 FROM `iot_devices_measurements_db2` m
 LEFT JOIN `iot_devices_db2` d

@@ -20,6 +20,8 @@ CREATE TABLE DB2INST1.IOT_DEVICES (
     device_identifier  VARCHAR(50)   NOT NULL,
     vendor_name        VARCHAR(100)  NOT NULL,
     serial_number      VARCHAR(100)  NOT NULL,
+    lat                DOUBLE,
+    long               DOUBLE,
     created_timestamp  TIMESTAMP     NOT NULL WITH DEFAULT CURRENT TIMESTAMP,
     PRIMARY KEY (device_identifier)
 );
